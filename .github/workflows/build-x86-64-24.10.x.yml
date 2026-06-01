@@ -1,4 +1,4 @@
-name: zyq-build-x86-64-immortalwrt-24.10.x
+name: 1zbuild-x86-64-immortalwrt-24.10.x
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ on:
       profile:
         description: '请输入要编译固件大小 单位(MB)'
         required: true
-        default: '2048'
+        default: '1024'
       enable_store:
         description: "集成 store 商店"
         required: false
@@ -133,17 +133,6 @@ jobs:
           else
             echo -e "\n#### 不带docker" >> ${{ github.workspace }}/router-info.md
           fi
-          
-          # 添加镜像格式说明
-          echo "" >> ${{ github.workspace }}/router-info.md
-          echo "## 📦 可用的镜像格式" >> ${{ github.workspace }}/router-info.md
-          echo "" >> ${{ github.workspace }}/router-info.md
-          echo "本次编译包含以下四种格式的镜像：" >> ${{ github.workspace }}/router-info.md
-          echo "" >> ${{ github.workspace }}/router-info.md
-          echo "1. **ext4-combined-efi.img.gz** - ext4格式，包含引导，EFI启动" >> ${{ github.workspace }}/router-info.md
-          echo "2. **ext4-rootfs.img.gz** - ext4格式，仅rootfs（不含引导）" >> ${{ github.workspace }}/router-info.md
-          echo "3. **squashfs-combined-efi.img.gz** - squashfs格式，包含引导，EFI启动" >> ${{ github.workspace }}/router-info.md
-          echo "4. **squashfs-rootfs.img.gz** - squashfs格式，仅rootfs（不含引导）" >> ${{ github.workspace }}/router-info.md
 
       - name: Upload ImmortWrt as release assets
         uses: softprops/action-gh-release@v2.2.1
@@ -151,7 +140,8 @@ jobs:
           tag_name: Autobuild-x86-64
           body_path: ${{ github.workspace }}/router-info.md
           files: |
-            ${{ github.workspace }}/bin/targets/x86/64/*.img.gz
+            ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined-efi.img.gz
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+帮我把IP改成固定，172.16.1.251，把pppoe删除！其它不要动
