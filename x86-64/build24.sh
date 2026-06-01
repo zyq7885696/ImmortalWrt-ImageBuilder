@@ -43,10 +43,10 @@ for ipk in *.ipk; do
         echo "处理 $ipk..."
         # 创建临时目录
         TEMP_DIR=$(mktemp -d)
-        cd $TEMP_DIR
+        cd "$TEMP_DIR"
         
         # 解压 ipk (ar归档格式)
-        ar x /home/build/immortalwrt/kucat-packages/"$ipk"
+        ar x "/home/build/immortalwrt/kucat-packages/$ipk"
         
         # 解压 data.tar.gz 或 data.tar.xz
         if [ -f data.tar.gz ]; then
@@ -60,7 +60,7 @@ for ipk in *.ipk; do
         fi
         
         cd /home/build/immortalwrt
-        rm -rf $TEMP_DIR
+        rm -rf "$TEMP_DIR"
     fi
 done
 
@@ -68,8 +68,7 @@ done
 mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
 cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 #!/bin/sh
-# 等待系统就绪后设置kucat为默认主题
-sleep 2
+# 设置kucat为默认主题（无需sleep，uci-defaults执行时机系统已就绪）
 if [ -d "/www/luci-static/kucat" ]; then
     uci set luci.main.mediaurlbase='/luci-static/kucat'
     uci commit luci
@@ -98,10 +97,10 @@ else
 
   # 拷贝 run/x86 下所有 run 文件和ipk文件 到 extra-packages 目录
   mkdir -p /home/build/immortalwrt/extra-packages
-  cp -r /tmp/store-run-repo/run/x86/* /home/build/immortalwrt/extra-packages/
+  cp -rf /tmp/store-run-repo/run/x86/* /home/build/immortalwrt/extra-packages/ 2>/dev/null
 
   echo "✅ Run files copied to extra-packages:"
-  ls -lh /home/build/immortalwrt/extra-packages/*.run
+  ls -lh /home/build/immortalwrt/extra-packages/*.run 2>/dev/null
   # 解压并拷贝ipk到packages目录
   sh shell/prepare-packages.sh
   ls -lah /home/build/immortalwrt/packages/
@@ -116,9 +115,8 @@ PACKAGES=""
 PACKAGES="$PACKAGES curl"
 PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
-# 注意：kucat 主题已被解压到 files 目录，不需要在 PACKAGES 中声明
-# 只需要包含 luci 基础包
-PACKAGES="$PACKAGES luci"
+# 基础luci
+PACKAGES="$PACKAGES luci luci-base"
 #24.10
 PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
@@ -128,38 +126,29 @@ PACKAGES="$PACKAGES openssh-sftp-server"
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 
 # ============ 新增 SmartDNS 插件 ============
-# SmartDNS - 智能DNS解析加速，提升网络访问速度
-PACKAGES="$PACKAGES luci-app-smartdns"
-PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
-PACKAGES="$PACKAGES smartdns"
+PACKAGES="$PACKAGES luci-app-smartdns luci-i18n-smartdns-zh-cn smartdns"
 
 # ============ 新增插件 ============
-# MOSDNS - DNS 分流工具
-PACKAGES="$PACKAGES luci-app-mosdns"
-PACKAGES="$PACKAGES luci-i18n-mosdns-zh-cn"
-PACKAGES="$PACKAGES mosdns"
+# MOSDNS
+PACKAGES="$PACKAGES luci-app-mosdns luci-i18n-mosdns-zh-cn mosdns"
 
-# OpenClash - 代理客户端
+# OpenClash
 PACKAGES="$PACKAGES luci-app-openclash"
 
-# ZeroTier - 虚拟组网
-PACKAGES="$PACKAGES luci-app-zerotier"
-PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
-PACKAGES="$PACKAGES zerotier"
+# ZeroTier
+PACKAGES="$PACKAGES luci-app-zerotier luci-i18n-zerotier-zh-cn zerotier"
 
-# DDNS-GO - 动态域名解析
-PACKAGES="$PACKAGES luci-app-ddns-go"
-PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
-PACKAGES="$PACKAGES ddns-go"
+# DDNS-GO
+PACKAGES="$PACKAGES luci-app-ddns-go luci-i18n-ddns-go-zh-cn ddns-go"
 
 # ======== shell/custom-packages.sh =======
-# 合并imm仓库以外的第三方插件
+# 合并第三方插件
 PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
 
 # 判断是否需要编译 Docker 插件
 if [ "$INCLUDE_DOCKER" = "yes" ]; then
-    PACKAGES="$PACKAGES luci-i18n-dockerman-zh-cn"
-    echo "Adding package: luci-i18n-dockerman-zh-cn"
+    PACKAGES="$PACKAGES luci-i18n-dockerman-zh-cn docker docker-compose"
+    echo "Adding Docker packages"
 fi
 
 # 为 OpenClash 添加内核文件
@@ -167,50 +156,48 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
     echo "✅ 已选择 luci-app-openclash，添加 OpenClash 内核和配置文件"
     
     # 创建 OpenClash 目录
-    mkdir -p files/etc/openclash/core
-    mkdir -p files/etc/openclash/config
+    mkdir -p /home/build/immortalwrt/files/etc/openclash/core
+    mkdir -p /home/build/immortalwrt/files/etc/openclash/config
     
-    # 下载 clash_meta 内核 (推荐使用 meta 内核)
+    # 下载 clash_meta 内核
     echo "正在下载 Clash Meta 内核..."
     META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-v1.tar.gz"
-    if wget -q --show-progress $META_URL -O - | tar xOvz > files/etc/openclash/core/clash_meta; then
-        chmod +x files/etc/openclash/core/clash_meta
+    if wget -q --show-progress "$META_URL" -O - | tar xOvz > /home/build/immortalwrt/files/etc/openclash/core/clash_meta; then
+        chmod +x /home/build/immortalwrt/files/etc/openclash/core/clash_meta
         echo "✅ Clash Meta 内核下载完成"
     else
         echo "⚠️ Clash Meta 内核下载失败"
     fi
     
-    # 下载 GeoIP 和 GeoSite 数据库
-    echo "正在下载 GeoIP 和 GeoSite 数据库..."
-    wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
-    wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
+    # 下载 GeoIP 库
+    echo "正在下载规则库..."
+    wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O /home/build/immortalwrt/files/etc/openclash/GeoIP.dat
+    wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O /home/build/immortalwrt/files/etc/openclash/GeoSite.dat
     
     echo "✅ OpenClash 文件添加完成"
 else
     echo "⚪️ 未选择 luci-app-openclash"
 fi
 
-# 为 MOSDNS 添加默认配置（可选）
+# 为 MOSDNS 添加默认配置
 if echo "$PACKAGES" | grep -q "luci-app-mosdns"; then
     echo "✅ 已选择 luci-app-mosdns，创建配置目录"
-    mkdir -p files/etc/mosdns
-    echo "✅ MOSDNS 配置目录创建完成"
+    mkdir -p /home/build/immortalwrt/files/etc/mosdns
 fi
 
 # 为 ZeroTier 创建配置目录
 if echo "$PACKAGES" | grep -q "luci-app-zerotier"; then
     echo "✅ 已选择 luci-app-zerotier，创建配置目录"
-    mkdir -p files/etc/zerotier
-    echo "✅ ZeroTier 配置目录创建完成"
+    mkdir -p /home/build/immortalwrt/files/etc/zerotier
 fi
 
 # 添加固定IP设置
-CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null)
-
-if [ -n "$CUSTOM_ROUTER_IP" ]; then
-    echo "🔄 正在设置路由器管理地址为: $CUSTOM_ROUTER_IP"
-    
-    cat << EOF > /home/build/immortalwrt/files/etc/config/network
+if [ -f "/home/build/immortalwrt/files/etc/config/custom_router_ip.txt" ]; then
+    CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt)
+    if [ -n "$CUSTOM_ROUTER_IP" ]; then
+        echo "🔄 正在设置路由器管理地址为: $CUSTOM_ROUTER_IP"
+        
+        cat << EOF > /home/build/immortalwrt/files/etc/config/network
 config interface 'loopback'
         option device 'lo'
         option proto 'static'
@@ -241,38 +228,23 @@ config interface 'wan6'
         option proto 'dhcpv6'
 EOF
 
-    echo "✅ 已设置路由器管理地址为: $CUSTOM_ROUTER_IP"
+        echo "✅ 已设置路由器管理地址为: $CUSTOM_ROUTER_IP"
+    fi
 else
     echo "⚠️ 未找到自定义IP配置，使用默认配置"
 fi
 
 # 构建镜像
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with packages:"
 echo "$PACKAGES"
 echo "=========================================="
-echo "包含的主要插件:"
-echo "- SmartDNS (智能DNS加速)"
-echo "- MOSDNS (DNS 分流)"
-echo "- OpenClash (代理客户端 + 内核)"
-echo "- ZeroTier (虚拟组网)"
-echo "- DDNS-GO (动态域名解析)"
-echo "- Docker (如果启用: $INCLUDE_DOCKER)"
-echo "- Kucat 主题 (已预装并设为默认)"
-echo "=========================================="
 
-# 测试软件包是否可用
-echo "测试软件包可用性..."
-for pkg in $PACKAGES; do
-    echo "检查包: $pkg"
-done
-
-# 执行构建并捕获错误详情
-echo "开始执行 make image 命令..."
-if make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE 2>&1 | tee /tmp/make_output.log; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
+# 执行构建
+echo "开始执行 make image..."
+if make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE="$PROFILE" 2>&1 | tee /tmp/make_output.log; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - 构建成功！"
 else
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
-    echo "最后50行构建日志:"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - 构建失败！"
     tail -50 /tmp/make_output.log
     exit 1
 fi
