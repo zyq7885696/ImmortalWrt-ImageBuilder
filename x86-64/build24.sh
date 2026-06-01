@@ -119,9 +119,11 @@ PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 
 # 新增插件
 PACKAGES="$PACKAGES luci-app-ddns-go"  # DDNS-GO
+PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn
 PACKAGES="$PACKAGES luci-app-zerotier"  # ZeroTier
 PACKAGES="$PACKAGES luci-app-openclash"  # OpenClash
 PACKAGES="$PACKAGES luci-app-smartdns"  # SmartDNS
+PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn
 
 # 添加本地 Kucat 主题包路径
 if ls /home/build/immortalwrt/packages/kucat/luci-theme-kucat*.ipk 1> /dev/null 2>&1; then
