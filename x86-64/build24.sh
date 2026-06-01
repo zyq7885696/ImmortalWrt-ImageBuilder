@@ -27,20 +27,43 @@ mkdir -p /home/build/immortalwrt/kucat-packages
 cd /home/build/immortalwrt/kucat-packages
 
 # 下载 kucat 主题和插件
-wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-theme-kucat_2.2.0_all.ipk
-wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-i18n-kucat-config-zh-cn_0_all.ipk
-wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-app-kucat-config_2.2.0-r20260227_all.ipk
+echo "下载 luci-theme-kucat..."
+wget -q --show-progress https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-theme-kucat_2.2.0_all.ipk
 
-# 解压 ipk 文件到 files 目录，这样它们会被直接包含在固件中
+echo "下载 luci-i18n-kucat-config-zh-cn..."
+wget -q --show-progress https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-i18n-kucat-config-zh-cn_0_all.ipk
+
+echo "下载 luci-app-kucat-config..."
+wget -q --show-progress https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-app-kucat-config_2.2.0-r20260227_all.ipk
+
+# 检查下载是否成功
+echo "下载的文件列表:"
+ls -lh *.ipk
+
+# 解压 ipk 文件到 files 目录
 for ipk in *.ipk; do
     if [ -f "$ipk" ]; then
-        echo "解压 $ipk 到 files 目录..."
-        mkdir -p /home/build/immortalwrt/files/tmp/ipk_extract
-        cd /home/build/immortalwrt/files/tmp/ipk_extract
-        tar -xzf /home/build/immortalwrt/kucat-packages/"$ipk"
-        tar -xzf data.tar.gz -C /home/build/immortalwrt/files/
-        cd /home/build/immortalwrt/kucat-packages
-        rm -rf /home/build/immortalwrt/files/tmp/ipk_extract
+        echo "正在解压 $ipk..."
+        # 创建临时目录
+        TEMP_DIR=$(mktemp -d)
+        cd $TEMP_DIR
+        
+        # 解压 ipk (ipk 是 ar 归档格式)
+        ar x /home/build/immortalwrt/kucat-packages/"$ipk"
+        
+        # 解压 data.tar.gz
+        if [ -f data.tar.gz ]; then
+            tar -xzf data.tar.gz -C /home/build/immortalwrt/files/
+            echo "✅ 已解压 $ipk 的内容到 files 目录"
+        elif [ -f data.tar.xz ]; then
+            tar -xJf data.tar.xz -C /home/build/immortalwrt/files/
+            echo "✅ 已解压 $ipk 的内容到 files 目录"
+        else
+            echo "⚠️ 找不到 data.tar.gz 或 data.tar.xz"
+        fi
+        
+        cd /home/build/immortalwrt
+        rm -rf $TEMP_DIR
     fi
 done
 
@@ -54,6 +77,10 @@ uci commit luci
 exit 0
 EOF
 chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
+
+# 验证文件是否已正确复制
+echo "验证 kucat 主题文件是否已复制:"
+find /home/build/immortalwrt/files -name "*kucat*" -type f 2>/dev/null | head -20
 
 echo "✅ kucat 主题和相关插件已解压到 files 目录"
 
@@ -98,6 +125,12 @@ PACKAGES="$PACKAGES openssh-sftp-server"
 # 文件管理器
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 
+# ============ 新增 SmartDNS 插件 ============
+# SmartDNS - 智能DNS解析加速，提升网络访问速度
+PACKAGES="$PACKAGES luci-app-smartdns"
+PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
+PACKAGES="$PACKAGES smartdns"
+
 # ============ 新增插件 ============
 # MOSDNS - DNS 分流工具
 PACKAGES="$PACKAGES luci-app-mosdns"
@@ -116,12 +149,6 @@ PACKAGES="$PACKAGES zerotier"
 PACKAGES="$PACKAGES luci-app-ddns-go"
 PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
 PACKAGES="$PACKAGES ddns-go"
-
-# ============ 新增 SmartDNS 插件 ============
-# SmartDNS - 智能DNS解析加速，提升网络访问速度
-PACKAGES="$PACKAGES luci-app-smartdns"
-PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
-PACKAGES="$PACKAGES smartdns"
 
 # ======== shell/custom-packages.sh =======
 # 合并imm仓库以外的第三方插件
@@ -144,17 +171,17 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
     # 下载 clash_meta 内核 (推荐使用 meta 内核)
     echo "正在下载 Clash Meta 内核..."
     META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-v1.tar.gz"
-    wget -qO- $META_URL | tar xOvz > files/etc/openclash/core/clash_meta
+    wget -q --show-progress $META_URL -O - | tar xOvz > files/etc/openclash/core/clash_meta
     chmod +x files/etc/openclash/core/clash_meta
     
     # 下载 GeoIP 和 GeoSite 数据库
     echo "正在下载 GeoIP 和 GeoSite 数据库..."
-    wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
-    wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
+    wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
+    wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
     
     # 下载 OpenClash 配置文件转换工具
     echo "正在下载配置文件转换工具..."
-    wget -q https://raw.githubusercontent.com/vernesong/OpenClash/master/luci-app-openclash/root/etc/openclash/tools/yq -O files/etc/openclash/yq
+    wget -q --show-progress https://raw.githubusercontent.com/vernesong/OpenClash/master/luci-app-openclash/root/etc/openclash/tools/yq -O files/etc/openclash/yq
     chmod +x files/etc/openclash/yq
     
     echo "✅ OpenClash 内核和文件添加完成"
@@ -166,7 +193,6 @@ fi
 if echo "$PACKAGES" | grep -q "luci-app-mosdns"; then
     echo "✅ 已选择 luci-app-mosdns，创建配置目录"
     mkdir -p files/etc/mosdns
-    # 可以在这里添加自定义的 MOSDNS 配置文件
     echo "✅ MOSDNS 配置目录创建完成"
 fi
 
@@ -182,11 +208,13 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:
 echo "$PACKAGES"
 echo "=========================================="
 echo "包含的主要插件:"
+echo "- SmartDNS (智能DNS加速)"
 echo "- MOSDNS (DNS 分流)"
 echo "- OpenClash (代理客户端 + 内核)"
 echo "- ZeroTier (虚拟组网)"
 echo "- DDNS-GO (动态域名解析)"
 echo "- Docker (如果启用: $INCLUDE_DOCKER)"
+echo "- Kucat 主题 (已预装并设为默认)"
 echo "=========================================="
 
 make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE
