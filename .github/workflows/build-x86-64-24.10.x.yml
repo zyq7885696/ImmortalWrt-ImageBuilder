@@ -56,8 +56,6 @@ on:
 permissions:
   contents: write
 
-# ... 前面的部分保持不变 ...
-
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -69,12 +67,63 @@ jobs:
       - name: Set executable permissions
         run: chmod +x ${{ github.workspace }}/x86-64/build24.sh
 
-      - name: Save Custom Router IP into OpenWrt files
+      - name: Create custom configuration directory
         run: |
           mkdir -p "${{ github.workspace }}/custom"
+          mkdir -p "${{ github.workspace }}/files/etc/uci-defaults"
+          
+      - name: Save Custom Router IP into OpenWrt files
+        run: |
           echo "${{ github.event.inputs.custom_router_ip }}" > "${{ github.workspace }}/custom/custom_router_ip.txt"
           echo "您设置的路由器管理地址是:${{ github.event.inputs.custom_router_ip }}"
-      
+          
+      - name: Create network auto-config script for single NIC
+        run: |
+          cat > "${{ github.workspace }}/files/etc/uci-defaults/99-fix-network" << 'EOF'
+          #!/bin/sh
+          
+          # 检测网卡数量
+          NIC_COUNT=$(ls /sys/class/net/ | grep -E '^eth[0-9]+$' | wc -l)
+          CUSTOM_IP="${{ github.event.inputs.custom_router_ip }}"
+          
+          if [ "$NIC_COUNT" -eq 1 ]; then
+              # 单网卡情况：自动设置固定IP
+              echo "检测到单网卡，自动设置固定IP: $CUSTOM_IP"
+              
+              # 获取网卡名称
+              NIC_NAME=$(ls /sys/class/net/ | grep -E '^eth[0-9]+$' | head -1)
+              
+              # 设置固定IP
+              uci set network.lan=interface
+              uci set network.lan.proto='static'
+              uci set network.lan.ipaddr="$CUSTOM_IP"
+              uci set network.lan.netmask='255.255.255.0'
+              uci set network.lan.device="$NIC_NAME"
+              
+              # 禁用DHCP客户端
+              uci set network.wan=interface
+              uci set network.wan.proto='none'
+              uci delete network.wan.device 2>/dev/null || true
+              
+              # 提交更改
+              uci commit network
+              
+              # 重启网络服务
+              /etc/init.d/network restart
+          else
+              echo "检测到多网卡($NIC_COUNT个)，使用默认配置或用户设置的管理地址"
+              # 多网卡情况：只设置LAN口IP（用户指定的管理地址）
+              if [ -n "$CUSTOM_IP" ] && [ "$CUSTOM_IP" != "192.168.1.1" ]; then
+                  uci set network.lan.ipaddr="$CUSTOM_IP"
+                  uci commit network
+              fi
+          fi
+          
+          exit 0
+          EOF
+          
+          chmod +x "${{ github.workspace }}/files/etc/uci-defaults/99-fix-network"
+          
       - name: Validate PPPoE Inputs
         run: |
           if [[ "${{ inputs.enable_pppoe }}" == "yes" ]]; then
@@ -126,6 +175,9 @@ jobs:
           - 🏠 **后台地址**: ${{ github.event.inputs.custom_router_ip }}
           - 👤 **用户名**: root
           - 🔑 **密码**: 无
+          - 🔧 **网络配置**: 自动检测网卡数量并配置
+            - 单网卡: 自动设置为固定IP (${{ github.event.inputs.custom_router_ip }})
+            - 多网卡: LAN口使用指定IP，WAN口使用DHCP/PPPoE
           EOF
 
           if [ "${{ github.event.inputs.include_docker }}" == "yes" ]; then
@@ -142,6 +194,10 @@ jobs:
           - **SQUASHFS**: 可恢复出厂设置，支持配置重置
           - **rootfs**: 适用于容器环境或自定义分区
           - **combined-efi**: 适用于 UEFI 启动的 squashfs 镜像
+          
+          ## 🌐 网络说明
+          - **单网卡设备**: 固件会自动检测并将唯一网卡设置为LAN口，使用固定IP: ${{ github.event.inputs.custom_router_ip }}
+          - **多网卡设备**: eth0为WAN口，eth1为LAN口，LAN口IP为: ${{ github.event.inputs.custom_router_ip }}
           EOF
 
       - name: Upload ImmortWrt as release assets
