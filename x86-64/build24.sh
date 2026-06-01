@@ -58,56 +58,40 @@ echo "✅ kucat 主题已解压"
 
 cd /home/build/immortalwrt
 
-# ============= 完整包列表 =============
+# ============= 包列表 =============
 echo "$(date '+%Y-%m-%d %H:%M:%S') - 开始构建固件..."
 
 PACKAGES=""
-# 基础包
 PACKAGES="$PACKAGES curl"
 PACKAGES="$PACKAGES luci"
 PACKAGES="$PACKAGES luci-i18n-base-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
-
-# 磁盘管理
 PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES fdisk"
 PACKAGES="$PACKAGES openssh-sftp-server"
-
-# 文件管理器
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
-
-# SmartDNS
 PACKAGES="$PACKAGES luci-app-smartdns"
 PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
 PACKAGES="$PACKAGES smartdns"
-
-# ZeroTier
 PACKAGES="$PACKAGES luci-app-zerotier"
 PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
 PACKAGES="$PACKAGES zerotier"
-
-# DDNS-GO
 PACKAGES="$PACKAGES luci-app-ddns-go"
 PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
 PACKAGES="$PACKAGES ddns-go"
 
-# ========== 注意：没有添加 dnsmasq-full，使用系统自带的 ==========
-# ========== 没有添加 OpenClash、MOSDNS ==========
-
-# 合并第三方插件
 if [ -n "$CUSTOM_PACKAGES" ]; then
     PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
 fi
 
-# 判断是否需要编译 Docker 插件
 if [ "$INCLUDE_DOCKER" = "yes" ]; then
     PACKAGES="$PACKAGES luci-i18n-dockerman-zh-cn"
     echo "Adding package: luci-i18n-dockerman-zh-cn"
 fi
 
-# 添加固定IP设置
+# 固定IP设置
 CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null)
 
 if [ -n "$CUSTOM_ROUTER_IP" ]; then
@@ -145,8 +129,7 @@ EOF
 fi
 
 echo "=========================================="
-echo "Building with packages:"
-echo "$PACKAGES"
+echo "Building with packages: $PACKAGES"
 echo "=========================================="
 
 make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE
@@ -154,10 +137,8 @@ make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt
 if [ $? -eq 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
     echo ""
-    echo "=========================================="
-    echo "生成的镜像文件:"
-    ls -lh /home/build/immortalwrt/bin/targets/x86/64/*.img.gz 2>/dev/null
-    echo "=========================================="
+    echo "生成的镜像:"
+    ls -lh /home/build/immortalwrt/bin/targets/x86/64/*.img.gz
 else
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Build failed!"
     exit 1
