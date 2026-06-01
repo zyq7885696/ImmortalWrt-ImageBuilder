@@ -97,10 +97,35 @@ PACKAGES="$PACKAGES openssh-sftp-server"
 
 # 文件管理器
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
+
+# ============ 新增插件 ============
+# MOSDNS - DNS 分流工具
+PACKAGES="$PACKAGES luci-app-mosdns"
+PACKAGES="$PACKAGES luci-i18n-mosdns-zh-cn"
+PACKAGES="$PACKAGES mosdns"
+
+# OpenClash - 代理客户端
+PACKAGES="$PACKAGES luci-app-openclash"
+
+# ZeroTier - 虚拟组网
+PACKAGES="$PACKAGES luci-app-zerotier"
+PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
+PACKAGES="$PACKAGES zerotier"
+
+# DDNS-GO - 动态域名解析
+PACKAGES="$PACKAGES luci-app-ddns-go"
+PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
+PACKAGES="$PACKAGES ddns-go"
+
+# ============ 新增 SmartDNS 插件 ============
+# SmartDNS - 智能DNS解析加速，提升网络访问速度
+PACKAGES="$PACKAGES luci-app-smartdns"
+PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
+PACKAGES="$PACKAGES smartdns"
+
 # ======== shell/custom-packages.sh =======
 # 合并imm仓库以外的第三方插件
 PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
-
 
 # 判断是否需要编译 Docker 插件
 if [ "$INCLUDE_DOCKER" = "yes" ]; then
@@ -108,45 +133,61 @@ if [ "$INCLUDE_DOCKER" = "yes" ]; then
     echo "Adding package: luci-i18n-dockerman-zh-cn"
 fi
 
-# 若构建openclash 则添加内核
+# 为 OpenClash 添加内核文件
 if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
-    echo "✅ 已选择 luci-app-openclash，添加 openclash core"
+    echo "✅ 已选择 luci-app-openclash，添加 OpenClash 内核和配置文件"
+    
+    # 创建 OpenClash 目录
     mkdir -p files/etc/openclash/core
-    # Download clash_meta
+    mkdir -p files/etc/openclash/config
+    
+    # 下载 clash_meta 内核 (推荐使用 meta 内核)
+    echo "正在下载 Clash Meta 内核..."
     META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-v1.tar.gz"
     wget -qO- $META_URL | tar xOvz > files/etc/openclash/core/clash_meta
     chmod +x files/etc/openclash/core/clash_meta
-    # Download GeoIP and GeoSite
+    
+    # 下载 GeoIP 和 GeoSite 数据库
+    echo "正在下载 GeoIP 和 GeoSite 数据库..."
     wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
     wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
-    # Download latest openclash Client
-    URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases/latest \
-      | grep "browser_download_url.*ipk" \
-      | head -n1 \
-      | cut -d '"' -f 4)
-    echo "OpenClash latest ipk: $URL"
-    wget "$URL" -P /home/build/immortalwrt/packages/
+    
+    # 下载 OpenClash 配置文件转换工具
+    echo "正在下载配置文件转换工具..."
+    wget -q https://raw.githubusercontent.com/vernesong/OpenClash/master/luci-app-openclash/root/etc/openclash/tools/yq -O files/etc/openclash/yq
+    chmod +x files/etc/openclash/yq
+    
+    echo "✅ OpenClash 内核和文件添加完成"
 else
     echo "⚪️ 未选择 luci-app-openclash"
 fi
 
-if echo "$PACKAGES" | grep -q "luci-app-ssr-plus"; then
-    echo "✅ 已选择 luci-app-ssr-plus，添加 mihomo core"
-    mkdir -p files/usr/bin
-    # Download mihomo
-    MIHOMO_URL="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-linux-amd64-compatible-v1.19.24.gz"
-    mkdir -p files/usr/bin
-    wget -qO- "$MIHOMO_URL" | gzip -dc > files/usr/bin/mihomo
-    chmod +x files/usr/bin/mihomo
-    echo "✅ 已下载 mihomo core"
-    ls -lah files/usr/bin
-else
-    echo "⚪️ 未选择 luci-app-ssr-plus"
+# 为 MOSDNS 添加默认配置（可选）
+if echo "$PACKAGES" | grep -q "luci-app-mosdns"; then
+    echo "✅ 已选择 luci-app-mosdns，创建配置目录"
+    mkdir -p files/etc/mosdns
+    # 可以在这里添加自定义的 MOSDNS 配置文件
+    echo "✅ MOSDNS 配置目录创建完成"
+fi
+
+# 为 ZeroTier 创建配置目录
+if echo "$PACKAGES" | grep -q "luci-app-zerotier"; then
+    echo "✅ 已选择 luci-app-zerotier，创建配置目录"
+    mkdir -p files/etc/zerotier
+    echo "✅ ZeroTier 配置目录创建完成"
 fi
 
 # 构建镜像
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
 echo "$PACKAGES"
+echo "=========================================="
+echo "包含的主要插件:"
+echo "- MOSDNS (DNS 分流)"
+echo "- OpenClash (代理客户端 + 内核)"
+echo "- ZeroTier (虚拟组网)"
+echo "- DDNS-GO (动态域名解析)"
+echo "- Docker (如果启用: $INCLUDE_DOCKER)"
+echo "=========================================="
 
 make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE
 
