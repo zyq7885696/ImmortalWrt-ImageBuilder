@@ -9,7 +9,7 @@ echo "编译固件大小为: $PROFILE MB"
 echo "Include Docker: $INCLUDE_DOCKER"
 
 echo "Create pppoe-settings"
-mkdir -p  /home/build/immortalwrt/files/etc/config
+mkdir -p /home/build/immortalwrt/files/etc/config
 
 # 创建pppoe配置文件 yml传入环境变量ENABLE_PPPOE等 写入配置文件 供99-custom.sh读取
 cat << EOF > /home/build/immortalwrt/files/etc/config/pppoe-settings
@@ -20,6 +20,174 @@ EOF
 
 echo "cat pppoe-settings"
 cat /home/build/immortalwrt/files/etc/config/pppoe-settings
+
+# ============= 创建单网卡自动配置脚本 ===============
+echo "🔧 创建网络自动配置脚本（支持单网卡自动固定IP）"
+mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
+
+# 读取用户设置的路由器管理地址
+CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null || echo "192.168.100.1")
+echo "路由器管理地址: $CUSTOM_ROUTER_IP"
+
+cat << 'NETWORK_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-fix-network
+#!/bin/sh
+
+# 日志文件
+LOG_FILE="/tmp/network-auto-config.log"
+echo "$(date): Starting network auto-config script" >> $LOG_FILE
+
+# 读取PPPoE配置
+if [ -f /etc/config/pppoe-settings ]; then
+    source /etc/config/pppoe-settings
+    echo "$(date): Loaded PPPoE settings - ENABLE_PPPOE=$enable_pppoe" >> $LOG_FILE
+fi
+
+# 读取自定义路由器IP
+CUSTOM_IP=""
+if [ -f /etc/config/custom_router_ip.txt ]; then
+    CUSTOM_IP=$(cat /etc/config/custom_router_ip.txt)
+    echo "$(date): Loaded custom router IP: $CUSTOM_IP" >> $LOG_FILE
+fi
+
+# 如果没读取到，使用默认值
+if [ -z "$CUSTOM_IP" ]; then
+    CUSTOM_IP="192.168.100.1"
+    echo "$(date): Using default router IP: $CUSTOM_IP" >> $LOG_FILE
+fi
+
+# 检测网卡数量
+NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -E '^eth[0-9]+$' | wc -l)
+echo "$(date): Detected $NIC_COUNT network interface(s)" >> $LOG_FILE
+
+# 如果有网络接口但数量为0，尝试其他命名方式
+if [ "$NIC_COUNT" -eq 0 ]; then
+    NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -v 'lo' | wc -l)
+    echo "$(date): Alternative detection found $NIC_COUNT interface(s)" >> $LOG_FILE
+fi
+
+# 单网卡处理
+if [ "$NIC_COUNT" -eq 1 ]; then
+    echo "$(date): Single NIC detected, configuring static IP" >> $LOG_FILE
+    
+    # 获取网卡名称
+    NIC_NAME=$(ls /sys/class/net/ 2>/dev/null | grep -E '^eth[0-9]+$' | head -1)
+    if [ -z "$NIC_NAME" ]; then
+        NIC_NAME=$(ls /sys/class/net/ 2>/dev/null | grep -v 'lo' | head -1)
+    fi
+    
+    echo "$(date): Using network interface: $NIC_NAME" >> $LOG_FILE
+    
+    # 备份原始配置
+    if [ -f /etc/config/network ]; then
+        cp /etc/config/network /etc/config/network.backup
+    fi
+    
+    # 配置单网卡为LAN口，使用静态IP
+    cat > /etc/config/network << EOF
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config interface 'lan'
+        option device '$NIC_NAME'
+        option proto 'static'
+        option ipaddr '$CUSTOM_IP'
+        option netmask '255.255.255.0'
+        option ip6assign '60'
+EOF
+    
+    # 如果启用了PPPoE，单网卡模式下PPPoE可能不适用，给出警告
+    if [ "$enable_pppoe" = "yes" ]; then
+        echo "$(date): WARNING: PPPoE is enabled but single NIC detected. PPPoE may not work properly." >> $LOG_FILE
+    fi
+    
+    echo "$(date): Single NIC configured with static IP: $CUSTOM_IP" >> $LOG_FILE
+    
+else
+    echo "$(date): Multiple NICs detected ($NIC_COUNT), using standard configuration" >> $LOG_FILE
+    
+    # 多网卡情况，保持标准配置
+    if [ "$enable_pppoe" = "yes" ]; then
+        echo "$(date): Configuring PPPoE on WAN interface" >> $LOG_FILE
+        
+        cat > /etc/config/network << EOF
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config interface 'wan'
+        option device 'eth0'
+        option proto 'pppoe'
+        option username '$pppoe_account'
+        option password '$pppoe_password'
+        option ipv6 'auto'
+
+config interface 'wan6'
+        option device 'eth0'
+        option proto 'dhcpv6'
+
+config interface 'lan'
+        option device 'eth1'
+        option proto 'static'
+        option ipaddr '$CUSTOM_IP'
+        option netmask '255.255.255.0'
+        option ip6assign '60'
+EOF
+        echo "$(date): PPPoE configured on eth0" >> $LOG_FILE
+    else
+        echo "$(date): Using standard DHCP configuration on WAN" >> $LOG_FILE
+        
+        cat > /etc/config/network << EOF
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config interface 'wan'
+        option device 'eth0'
+        option proto 'dhcp'
+
+config interface 'wan6'
+        option device 'eth0'
+        option proto 'dhcpv6'
+
+config interface 'lan'
+        option device 'eth1'
+        option proto 'static'
+        option ipaddr '$CUSTOM_IP'
+        option netmask '255.255.255.0'
+        option ip6assign '60'
+EOF
+    fi
+    
+    echo "$(date): Multiple NIC configuration completed" >> $LOG_FILE
+fi
+
+# 提交配置
+uci commit network
+
+# 重启网络服务
+/etc/init.d/network restart
+
+echo "$(date): Network configuration completed" >> $LOG_FILE
+exit 0
+NETWORK_EOF
+
+chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-fix-network
+echo "✅ 网络自动配置脚本已创建"
+
+# 保存自定义路由器IP到文件
+if [ -n "$CUSTOM_ROUTER_IP" ] && [ "$CUSTOM_ROUTER_IP" != "192.168.100.1" ]; then
+    echo "$CUSTOM_ROUTER_IP" > /home/build/immortalwrt/files/etc/config/custom_router_ip.txt
+    echo "✅ 自定义路由器IP已保存: $CUSTOM_ROUTER_IP"
+fi
+
+# ============= 原有代码继续 =============
 
 if [ -z "$CUSTOM_PACKAGES" ]; then
   echo "⚪️ 未选择 任何第三方软件包"
@@ -86,30 +254,24 @@ fi
 ls -lh /home/build/immortalwrt/packages/kucat/ > /home/build/immortalwrt/packages/kucat/kucat_packages.txt
 
 # 设置默认主题为 Kucat
-mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
-cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
+cat << 'THEME_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 #!/bin/sh
 # 设置 Kucat 为默认主题
 uci set luci.main.mediaurlbase='/luci-static/kucat'
 uci commit luci
-
-# 可选：设置 Argon 为暗色主题（如果需要）
-# uci set luci.themes.Argon='/luci-static/argon'
-# uci commit luci
 exit 0
-EOF
+THEME_EOF
 chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 
 echo "✅ Kucat 主题安装完成并设置为默认主题"
 ls -lh /home/build/immortalwrt/packages/kucat/
 
 # ============= imm仓库内的插件==============
-# 定义所需安装的包列表（已移除 Argon 主题）
+# 定义所需安装的包列表
 PACKAGES=""
 PACKAGES="$PACKAGES curl"
 PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
-# 已移除 Argon 主题相关包
 PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
 PACKAGES="$PACKAGES openssh-sftp-server"
