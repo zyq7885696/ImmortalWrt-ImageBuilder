@@ -121,6 +121,7 @@ PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 PACKAGES="$PACKAGES luci-app-ddns-go"  # DDNS-GO
 PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"  # DDNS-GO 中文语言包
 PACKAGES="$PACKAGES luci-app-zerotier"  # ZeroTier
+PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"  # ZeroTier 中文语言包
 PACKAGES="$PACKAGES luci-app-openclash"  # OpenClash
 PACKAGES="$PACKAGES luci-app-smartdns"  # SmartDNS
 PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"  # SmartDNS 中文语言包
