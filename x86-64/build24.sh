@@ -72,18 +72,14 @@ PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 PACKAGES="$PACKAGES fdisk"
 PACKAGES="$PACKAGES openssh-sftp-server"
-
-# ============= 取消下面一组的注释来测试 =============
-
-# 测试组1: SmartDNS (取消注释测试)
 PACKAGES="$PACKAGES luci-app-smartdns"
 PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
 PACKAGES="$PACKAGES smartdns"
 
 # 测试组2: ZeroTier (取消注释测试)
-# PACKAGES="$PACKAGES luci-app-zerotier"
-# PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
-# PACKAGES="$PACKAGES zerotier"
+PACKAGES="$PACKAGES luci-app-zerotier"
+PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
+PACKAGES="$PACKAGES zerotier"
 
 # 测试组3: DDNS-GO (取消注释测试)
 # PACKAGES="$PACKAGES luci-app-ddns-go"
