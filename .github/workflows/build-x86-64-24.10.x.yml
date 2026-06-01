@@ -56,6 +56,8 @@ on:
 permissions:
   contents: write
 
+# ... 前面的部分保持不变 ...
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -72,7 +74,6 @@ jobs:
           mkdir -p "${{ github.workspace }}/custom"
           echo "${{ github.event.inputs.custom_router_ip }}" > "${{ github.workspace }}/custom/custom_router_ip.txt"
           echo "您设置的路由器管理地址是:${{ github.event.inputs.custom_router_ip }}"
-          # 后续步骤会将该文件映射到路由器/etc/config/custom_router_ip.txt 以便用于开机脚本99-custom.sh读取用户设置的ip
       
       - name: Validate PPPoE Inputs
         run: |
@@ -133,6 +134,15 @@ jobs:
           else
             echo -e "\n#### 不带docker" >> ${{ github.workspace }}/router-info.md
           fi
+          
+          # 添加镜像类型说明
+          cat >> ${{ github.workspace }}/router-info.md <<EOF
+          
+          ## 📦 可用镜像类型
+          - **SQUASHFS**: 可恢复出厂设置，支持配置重置
+          - **rootfs**: 适用于容器环境或自定义分区
+          - **combined-efi**: 适用于 UEFI 启动的 squashfs 镜像
+          EOF
 
       - name: Upload ImmortWrt as release assets
         uses: softprops/action-gh-release@v2.2.1
@@ -141,6 +151,8 @@ jobs:
           body_path: ${{ github.workspace }}/router-info.md
           files: |
             ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined-efi.img.gz
+            ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined.img.gz
+            ${{ github.workspace }}/bin/targets/x86/64/*rootfs.tar.gz
+            ${{ github.workspace }}/bin/targets/x86/64/*ext4-combined-efi.img.gz
+            ${{ github.workspace }}/bin/targets/x86/64/*ext4-combined.img.gz
           token: ${{ secrets.GITHUB_TOKEN }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
