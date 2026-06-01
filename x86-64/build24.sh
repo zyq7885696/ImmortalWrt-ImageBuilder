@@ -335,7 +335,15 @@ echo "$PACKAGES"
 echo "📦 Kucat 主题包列表:"
 ls -lh /home/build/immortalwrt/packages/kucat/ 2>/dev/null || echo "无本地 Kucat 包"
 
-make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE
+make image PROFILE="generic" \
+  PACKAGES="$PACKAGES" \
+  FILES="/home/build/immortalwrt/files" \
+  ROOTFS_PARTSIZE=$PROFILE \
+  EXT4_IMGS=1 \
+  SQUASHFS_IMGS=1 \
+  TARGET_ROOTFS_EXT4FS=y \
+  TARGET_ROOTFS_SQUASHFS=y \
+  TARGET_IMAGES_GZIP=y
 
 if [ $? -ne 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
