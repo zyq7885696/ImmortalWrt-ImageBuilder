@@ -21,6 +21,35 @@ EOF
 echo "cat pppoe-settings"
 cat /home/build/immortalwrt/files/etc/config/pppoe-settings
 
+# ============= 下载 kucat 主题和相关插件 =============
+echo "🔄 正在下载 kucat 主题和相关插件..."
+mkdir -p /home/build/immortalwrt/kucat-packages
+cd /home/build/immortalwrt/kucat-packages
+
+# 下载 kucat 主题和插件
+wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-theme-kucat_2.2.0_all.ipk
+wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-i18n-kucat-config-zh-cn_0_all.ipk
+wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-app-kucat-config_2.2.0-r20260227_all.ipk
+
+# 创建默认主题配置文件
+mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
+cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
+#!/bin/sh
+# 设置 kucat 为默认主题
+uci set luci.main.mediaurlbase='/luci-static/kucat'
+uci commit luci
+exit 0
+EOF
+chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
+
+# 将下载的 ipk 文件复制到 packages 目录
+cp /home/build/immortalwrt/kucat-packages/*.ipk /home/build/immortalwrt/packages/ 2>/dev/null
+
+echo "✅ kucat 主题和相关插件下载完成"
+ls -lh /home/build/immortalwrt/kucat-packages/
+
+cd /home/build/immortalwrt
+
 if [ -z "$CUSTOM_PACKAGES" ]; then
   echo "⚪️ 未选择 任何第三方软件包"
 else
@@ -49,9 +78,10 @@ PACKAGES=""
 PACKAGES="$PACKAGES curl"
 PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
-PACKAGES="$PACKAGES luci-theme-argon"
-PACKAGES="$PACKAGES luci-app-argon-config"
-PACKAGES="$PACKAGES luci-i18n-argon-config-zh-cn"
+# 移除原来的 luci-theme-argon 和 luci-app-argon-config，替换为 kucat
+PACKAGES="$PACKAGES luci-theme-kucat"
+PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn"
+PACKAGES="$PACKAGES luci-app-kucat-config"
 #24.10
 PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
@@ -59,29 +89,6 @@ PACKAGES="$PACKAGES openssh-sftp-server"
 
 # 文件管理器
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
-
-# ======== 安装 KuCat 主题 + 配置 + 设置默认 ========
-echo "🎨 开始安装 KuCat 主题并设置为默认"
-mkdir -p /home/build/immortalwrt/packages
-cd /home/build/immortalwrt/packages
-
-# 下载主题IPK
-wget --no-check-certificate -O luci-app-kucat-config_2.2.0-r20260227_all.ipk https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-app-kucat-config_2.2.0-r20260227_all.ipk
-wget --no-check-certificate -O luci-i18n-kucat-config-zh-cn_0_all.ipk https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-i18n-kucat-config-zh-cn_0_all.ipk
-
-# 自动创建 UCI 默认配置：设置 KuCat 为默认主题
-mkdir -p /home/build/immortalwrt/files/etc/uci-defaults/
-cat > /home/build/immortalwrt/files/etc/uci-defaults/99-theme-default <<EOF
-#!/bin/sh
-uci set luci.main.mediaurlbase=/luci-static/kucat
-uci set luci.main.theme=kucat
-uci commit luci
-EOF
-chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-theme-default
-
-# 加入编译包列表
-PACKAGES="$PACKAGES luci-theme-kucat luci-app-kucat-config"
-
 # ======== shell/custom-packages.sh =======
 # 合并imm仓库以外的第三方插件
 PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
@@ -128,6 +135,7 @@ if echo "$PACKAGES" | grep -q "luci-app-ssr-plus"; then
 else
     echo "⚪️ 未选择 luci-app-ssr-plus"
 fi
+
 # 构建镜像
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
 echo "$PACKAGES"
