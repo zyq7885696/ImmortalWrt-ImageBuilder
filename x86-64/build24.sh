@@ -75,16 +75,14 @@ PACKAGES="$PACKAGES openssh-sftp-server"
 PACKAGES="$PACKAGES luci-app-smartdns"
 PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
 PACKAGES="$PACKAGES smartdns"
-
-# 测试组2: ZeroTier (取消注释测试)
 PACKAGES="$PACKAGES luci-app-zerotier"
 PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
 PACKAGES="$PACKAGES zerotier"
 
 # 测试组3: DDNS-GO (取消注释测试)
-# PACKAGES="$PACKAGES luci-app-ddns-go"
-# PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
-# PACKAGES="$PACKAGES ddns-go"
+PACKAGES="$PACKAGES luci-app-ddns-go"
+PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
+PACKAGES="$PACKAGES ddns-go"
 
 # 添加固定IP设置
 CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null)
