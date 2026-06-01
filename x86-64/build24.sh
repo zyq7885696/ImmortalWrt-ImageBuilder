@@ -21,8 +21,8 @@ EOF
 echo "cat pppoe-settings"
 cat /home/build/immortalwrt/files/etc/config/pppoe-settings
 
-# ============= 下载 kucat 主题和相关插件 =============
-echo "🔄 正在下载 kucat 主题和相关插件..."
+# ============= 集成 kucat 主题 =============
+echo "🔄 正在下载并集成 kucat 主题..."
 mkdir -p /home/build/immortalwrt/kucat-packages
 cd /home/build/immortalwrt/kucat-packages
 
@@ -36,30 +36,27 @@ wget -q --show-progress https://github.com/sirpdboy/luci-theme-kucat/releases/la
 echo "下载 luci-app-kucat-config..."
 wget -q --show-progress https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-app-kucat-config_2.2.0-r20260227_all.ipk
 
-# 检查下载是否成功
-echo "下载的文件列表:"
-ls -lh *.ipk
-
-# 解压 ipk 文件到 files 目录
+# 方法：直接解压到files目录（正确的方式）
+echo "正在解压主题包到文件系统..."
 for ipk in *.ipk; do
     if [ -f "$ipk" ]; then
-        echo "正在解压 $ipk..."
+        echo "处理 $ipk..."
         # 创建临时目录
         TEMP_DIR=$(mktemp -d)
         cd $TEMP_DIR
         
-        # 解压 ipk (ipk 是 ar 归档格式)
+        # 解压 ipk (ar归档格式)
         ar x /home/build/immortalwrt/kucat-packages/"$ipk"
         
-        # 解压 data.tar.gz
+        # 解压 data.tar.gz 或 data.tar.xz
         if [ -f data.tar.gz ]; then
             tar -xzf data.tar.gz -C /home/build/immortalwrt/files/
-            echo "✅ 已解压 $ipk 的内容到 files 目录"
+            echo "✅ 已解压 $ipk 的内容"
         elif [ -f data.tar.xz ]; then
             tar -xJf data.tar.xz -C /home/build/immortalwrt/files/
-            echo "✅ 已解压 $ipk 的内容到 files 目录"
+            echo "✅ 已解压 $ipk 的内容"
         else
-            echo "⚠️ 找不到 data.tar.gz 或 data.tar.xz"
+            echo "⚠️ 找不到数据文件"
         fi
         
         cd /home/build/immortalwrt
@@ -67,22 +64,27 @@ for ipk in *.ipk; do
     fi
 done
 
-# 创建默认主题配置文件
+# 创建UCI预设，将kucat设置为默认主题
 mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
 cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 #!/bin/sh
-# 设置 kucat 为默认主题
-uci set luci.main.mediaurlbase='/luci-static/kucat'
-uci commit luci
+# 等待系统就绪后设置kucat为默认主题
+sleep 2
+if [ -d "/www/luci-static/kucat" ]; then
+    uci set luci.main.mediaurlbase='/luci-static/kucat'
+    uci commit luci
+    echo "✅ Kucat主题已设置为默认"
+else
+    echo "⚠️ Kucat主题目录不存在"
+fi
 exit 0
 EOF
 chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 
-# 验证文件是否已正确复制
-echo "验证 kucat 主题文件是否已复制:"
-find /home/build/immortalwrt/files -name "*kucat*" -type f 2>/dev/null | head -20
-
-echo "✅ kucat 主题和相关插件已解压到 files 目录"
+# 验证文件已正确复制
+echo "验证主题文件："
+find /home/build/immortalwrt/files -name "*kucat*" -type d 2>/dev/null
+echo "✅ Kucat主题集成完成"
 
 cd /home/build/immortalwrt
 
