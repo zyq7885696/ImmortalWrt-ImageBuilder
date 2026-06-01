@@ -70,6 +70,10 @@ PACKAGES=""
 PACKAGES="$PACKAGES luci"           # Luci 界面
 PACKAGES="$PACKAGES luci-i18n-base-zh-cn"  # 中文
 PACKAGES="$PACKAGES curl"
+PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
+PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
+PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
+PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 
 # 添加固定IP设置
 CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null)
