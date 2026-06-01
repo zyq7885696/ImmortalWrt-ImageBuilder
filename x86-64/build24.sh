@@ -11,7 +11,6 @@ echo "Include Docker: $INCLUDE_DOCKER"
 echo "Create pppoe-settings"
 mkdir -p /home/build/immortalwrt/files/etc/config
 
-# 创建pppoe配置文件
 cat << EOF > /home/build/immortalwrt/files/etc/config/pppoe-settings
 enable_pppoe=${ENABLE_PPPOE}
 pppoe_account=${PPPOE_ACCOUNT}
@@ -21,17 +20,15 @@ EOF
 echo "cat pppoe-settings"
 cat /home/build/immortalwrt/files/etc/config/pppoe-settings
 
-# ============= 下载 kucat 主题和相关插件 =============
-echo "🔄 正在下载 kucat 主题和相关插件..."
+# ============= 下载 kucat 主题 =============
+echo "🔄 正在下载 kucat 主题..."
 mkdir -p /home/build/immortalwrt/kucat-packages
 cd /home/build/immortalwrt/kucat-packages
 
-# 下载 kucat 主题和插件
 wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-theme-kucat_2.2.0_all.ipk
 wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-i18n-kucat-config-zh-cn_0_all.ipk
 wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-app-kucat-config_2.2.0-r20260227_all.ipk
 
-# 解压 ipk 文件到 files 目录
 for ipk in *.ipk; do
     if [ -f "$ipk" ]; then
         echo "正在解压 $ipk..."
@@ -48,7 +45,6 @@ for ipk in *.ipk; do
     fi
 done
 
-# 创建默认主题配置文件
 mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
 cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 #!/bin/sh
@@ -62,18 +58,37 @@ echo "✅ kucat 主题已解压"
 
 cd /home/build/immortalwrt
 
-# ============= 简化包列表 - 先测试基础功能 =============
+# ============= 测试包列表 - 逐步添加 =============
 echo "$(date '+%Y-%m-%d %H:%M:%S') - 开始构建固件..."
 
-# 最精简的包列表 - 只包含必要组件
+# 基础包（已验证成功）
 PACKAGES=""
-PACKAGES="$PACKAGES luci"           # Luci 界面
-PACKAGES="$PACKAGES luci-i18n-base-zh-cn"  # 中文
+PACKAGES="$PACKAGES luci"
+PACKAGES="$PACKAGES luci-i18n-base-zh-cn"
 PACKAGES="$PACKAGES curl"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
+PACKAGES="$PACKAGES fdisk"
+PACKAGES="$PACKAGES openssh-sftp-server"
+
+# ============= 取消下面一组的注释来测试 =============
+
+# 测试组1: SmartDNS (取消注释测试)
+PACKAGES="$PACKAGES luci-app-smartdns"
+PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
+PACKAGES="$PACKAGES smartdns"
+
+# 测试组2: ZeroTier (取消注释测试)
+# PACKAGES="$PACKAGES luci-app-zerotier"
+# PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
+# PACKAGES="$PACKAGES zerotier"
+
+# 测试组3: DDNS-GO (取消注释测试)
+# PACKAGES="$PACKAGES luci-app-ddns-go"
+# PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
+# PACKAGES="$PACKAGES ddns-go"
 
 # 添加固定IP设置
 CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null)
@@ -112,7 +127,6 @@ config interface 'wan6'
 EOF
 fi
 
-# 构建镜像
 echo "Building with packages: $PACKAGES"
 
 make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE
