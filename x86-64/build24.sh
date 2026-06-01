@@ -31,6 +31,19 @@ wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/lu
 wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-i18n-kucat-config-zh-cn_0_all.ipk
 wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-app-kucat-config_2.2.0-r20260227_all.ipk
 
+# 解压 ipk 文件到 files 目录，这样它们会被直接包含在固件中
+for ipk in *.ipk; do
+    if [ -f "$ipk" ]; then
+        echo "解压 $ipk 到 files 目录..."
+        mkdir -p /home/build/immortalwrt/files/tmp/ipk_extract
+        cd /home/build/immortalwrt/files/tmp/ipk_extract
+        tar -xzf /home/build/immortalwrt/kucat-packages/"$ipk"
+        tar -xzf data.tar.gz -C /home/build/immortalwrt/files/
+        cd /home/build/immortalwrt/kucat-packages
+        rm -rf /home/build/immortalwrt/files/tmp/ipk_extract
+    fi
+done
+
 # 创建默认主题配置文件
 mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
 cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
@@ -42,11 +55,7 @@ exit 0
 EOF
 chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 
-# 将下载的 ipk 文件复制到 packages 目录
-cp /home/build/immortalwrt/kucat-packages/*.ipk /home/build/immortalwrt/packages/ 2>/dev/null
-
-echo "✅ kucat 主题和相关插件下载完成"
-ls -lh /home/build/immortalwrt/kucat-packages/
+echo "✅ kucat 主题和相关插件已解压到 files 目录"
 
 cd /home/build/immortalwrt
 
@@ -78,10 +87,9 @@ PACKAGES=""
 PACKAGES="$PACKAGES curl"
 PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
-# 移除原来的 luci-theme-argon 和 luci-app-argon-config，替换为 kucat
-PACKAGES="$PACKAGES luci-theme-kucat"
-PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn"
-PACKAGES="$PACKAGES luci-app-kucat-config"
+# 注意：kucat 主题已被解压到 files 目录，不需要在 PACKAGES 中声明
+# 只需要包含 luci 基础包
+PACKAGES="$PACKAGES luci"
 #24.10
 PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
