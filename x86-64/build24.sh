@@ -85,7 +85,7 @@ cd /home/build/immortalwrt
 echo "$(date '+%Y-%m-%d %H:%M:%S') - 开始构建固件..."
 
 # ============= imm仓库内的插件==============
-# 定义所需安装的包列表 - 精简版本，确保兼容性
+# 定义所需安装的包列表
 PACKAGES=""
 # 基础包
 PACKAGES="$PACKAGES curl"
@@ -164,7 +164,7 @@ EOF
     echo "✅ 已设置路由器管理地址为: $CUSTOM_ROUTER_IP"
 fi
 
-# 构建镜像 - 指定生成所有需要的格式
+# 构建镜像
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
 echo "$PACKAGES"
 echo "=========================================="
@@ -175,56 +175,38 @@ echo "- DDNS-GO (动态域名解析)"
 echo "- Kucat 主题 (已预装并设为默认)"
 echo "=========================================="
 
-# 使用 make image 并指定生成所有格式
-# TARGET_IMAGES 参数可以指定要生成的镜像类型
-make image \
-    PROFILE="generic" \
-    PACKAGES="$PACKAGES" \
-    FILES="/home/build/immortalwrt/files" \
-    ROOTFS_PARTSIZE=$PROFILE \
-    TARGET_IMAGES="ext4-combined-efi ext4-rootfs squashfs-combined-efi squashfs-rootfs"
+# 先检查包是否都可用
+echo "检查软件包可用性..."
+for pkg in $PACKAGES; do
+    if ! find /home/build/immortalwrt/packages -name "*${pkg}*.ipk" 2>/dev/null | grep -q .; then
+        if ! find /home/build/immortalwrt/bin -name "*${pkg}*.ipk" 2>/dev/null | grep -q .; then
+            echo "⚠️ 警告: 未找到包 $pkg 的预编译文件，可能需要在编译时从源码构建"
+        fi
+    fi
+done
+
+# 执行构建并捕获详细输出
+echo "开始执行 make image 命令..."
+make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE 2>&1 | tee /tmp/build_log.txt
 
 # 检查构建结果
-if [ $? -eq 0 ]; then
+if [ ${PIPESTATUS[0]} -eq 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
     
     # 显示生成的镜像文件
     echo "=========================================="
     echo "生成的镜像文件:"
-    echo "----------------------------------------"
-    
-    # 查找并列出所有镜像文件
-    IMAGE_DIR="/home/build/immortalwrt/bin/targets/x86/64"
-    
-    if [ -d "$IMAGE_DIR" ]; then
-        echo "ext4 格式:"
-        ls -lh $IMAGE_DIR/*ext4* 2>/dev/null || echo "  ❌ 未找到 ext4 镜像"
-        
-        echo ""
-        echo "squashfs 格式:"
-        ls -lh $IMAGE_DIR/*squashfs* 2>/dev/null || echo "  ❌ 未找到 squashfs 镜像"
-        
-        echo ""
-        echo "combined 格式:"
-        ls -lh $IMAGE_DIR/*combined* 2>/dev/null || echo "  ❌ 未找到 combined 镜像"
-        
-        echo ""
-        echo "rootfs 格式:"
-        ls -lh $IMAGE_DIR/*rootfs* 2>/dev/null || echo "  ❌ 未找到 rootfs 镜像"
-        
-        echo "----------------------------------------"
-        echo "完整文件列表:"
-        ls -lh $IMAGE_DIR/*.img* 2>/dev/null || echo "未找到镜像文件"
-    else
-        echo "❌ 镜像目录不存在: $IMAGE_DIR"
-    fi
+    ls -lh /home/build/immortalwrt/bin/targets/x86/64/*.img.gz 2>/dev/null || echo "未找到 .img.gz 文件"
+    ls -lh /home/build/immortalwrt/bin/targets/x86/64/*.img 2>/dev/null || echo "未找到 .img 文件"
     echo "=========================================="
-    
-    # 创建一个文件清单，方便后续上传
-    find $IMAGE_DIR -name "*.img*" -type f > /home/build/immortalwrt/bin/generated_images.txt
-    echo "镜像清单已保存到: /home/build/immortalwrt/bin/generated_images.txt"
-    
 else
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
+    echo ""
+    echo "========== 错误信息摘要 =========="
+    # 提取错误信息
+    grep -i "error\|failed\|missing\|conflict" /tmp/build_log.txt | tail -20
+    echo ""
+    echo "========== 最后30行构建日志 =========="
+    tail -30 /tmp/build_log.txt
     exit 1
 fi
