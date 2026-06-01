@@ -191,54 +191,6 @@ if echo "$PACKAGES" | grep -q "luci-app-zerotier"; then
     mkdir -p /home/build/immortalwrt/files/etc/zerotier
 fi
 
-# 添加固定IP设置
-if [ -f "/home/build/immortalwrt/files/etc/config/custom_router_ip.txt" ]; then
-    CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt)
-    if [ -n "$CUSTOM_ROUTER_IP" ]; then
-        echo "🔄 正在设置路由器管理地址为: $CUSTOM_ROUTER_IP"
-        
-        cat << EOF > /home/build/immortalwrt/files/etc/config/network
-config interface 'loopback'
-        option device 'lo'
-        option proto 'static'
-        option ipaddr '127.0.0.1'
-        option netmask '255.0.0.0'
-
-config globals 'globals'
-        option ula_prefix 'fd00:ab68:d9f0::/48'
-
-config device
-        option name 'br-lan'
-        option type 'bridge'
-        list ports 'eth0'
-
-config interface 'lan'
-        option device 'br-lan'
-        option proto 'static'
-        option ipaddr '$CUSTOM_ROUTER_IP'
-        option netmask '255.255.255.0'
-        option ip6assign '60'
-
-config interface 'wan'
-        option device 'eth1'
-        option proto 'dhcp'
-
-config interface 'wan6'
-        option device 'eth1'
-        option proto 'dhcpv6'
-EOF
-
-        echo "✅ 已设置路由器管理地址为: $CUSTOM_ROUTER_IP"
-    fi
-else
-    echo "⚠️ 未找到自定义IP配置，使用默认配置"
-fi
-
-# 构建镜像
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with packages:"
-echo "$PACKAGES"
-echo "=========================================="
-
 # 执行构建
 echo "开始执行 make image..."
 if make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE="$PROFILE" 2>&1 | tee /tmp/make_output.log; then
