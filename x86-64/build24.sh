@@ -9,7 +9,7 @@ echo "编译固件大小为: $PROFILE MB"
 echo "Include Docker: $INCLUDE_DOCKER"
 
 echo "Create pppoe-settings"
-mkdir -p  /home/build/immortalwrt/files/etc/config
+mkdir -p /home/build/immortalwrt/files/etc/config
 
 # 创建pppoe配置文件 yml传入环境变量ENABLE_PPPOE等 写入配置文件 供99-custom.sh读取
 cat << EOF > /home/build/immortalwrt/files/etc/config/pppoe-settings
@@ -171,20 +171,19 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
     # 下载 clash_meta 内核 (推荐使用 meta 内核)
     echo "正在下载 Clash Meta 内核..."
     META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-v1.tar.gz"
-    wget -q --show-progress $META_URL -O - | tar xOvz > files/etc/openclash/core/clash_meta
-    chmod +x files/etc/openclash/core/clash_meta
+    if wget -q --show-progress $META_URL -O - | tar xOvz > files/etc/openclash/core/clash_meta; then
+        chmod +x files/etc/openclash/core/clash_meta
+        echo "✅ Clash Meta 内核下载完成"
+    else
+        echo "⚠️ Clash Meta 内核下载失败"
+    fi
     
     # 下载 GeoIP 和 GeoSite 数据库
     echo "正在下载 GeoIP 和 GeoSite 数据库..."
     wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
     wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
     
-    # 下载 OpenClash 配置文件转换工具
-    echo "正在下载配置文件转换工具..."
-    wget -q --show-progress https://raw.githubusercontent.com/vernesong/OpenClash/master/luci-app-openclash/root/etc/openclash/tools/yq -O files/etc/openclash/yq
-    chmod +x files/etc/openclash/yq
-    
-    echo "✅ OpenClash 内核和文件添加完成"
+    echo "✅ OpenClash 文件添加完成"
 else
     echo "⚪️ 未选择 luci-app-openclash"
 fi
@@ -203,6 +202,48 @@ if echo "$PACKAGES" | grep -q "luci-app-zerotier"; then
     echo "✅ ZeroTier 配置目录创建完成"
 fi
 
+# 添加固定IP设置
+CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null)
+
+if [ -n "$CUSTOM_ROUTER_IP" ]; then
+    echo "🔄 正在设置路由器管理地址为: $CUSTOM_ROUTER_IP"
+    
+    cat << EOF > /home/build/immortalwrt/files/etc/config/network
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config globals 'globals'
+        option ula_prefix 'fd00:ab68:d9f0::/48'
+
+config device
+        option name 'br-lan'
+        option type 'bridge'
+        list ports 'eth0'
+
+config interface 'lan'
+        option device 'br-lan'
+        option proto 'static'
+        option ipaddr '$CUSTOM_ROUTER_IP'
+        option netmask '255.255.255.0'
+        option ip6assign '60'
+
+config interface 'wan'
+        option device 'eth1'
+        option proto 'dhcp'
+
+config interface 'wan6'
+        option device 'eth1'
+        option proto 'dhcpv6'
+EOF
+
+    echo "✅ 已设置路由器管理地址为: $CUSTOM_ROUTER_IP"
+else
+    echo "⚠️ 未找到自定义IP配置，使用默认配置"
+fi
+
 # 构建镜像
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
 echo "$PACKAGES"
@@ -217,11 +258,19 @@ echo "- Docker (如果启用: $INCLUDE_DOCKER)"
 echo "- Kucat 主题 (已预装并设为默认)"
 echo "=========================================="
 
-make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE
+# 测试软件包是否可用
+echo "测试软件包可用性..."
+for pkg in $PACKAGES; do
+    echo "检查包: $pkg"
+done
 
-if [ $? -ne 0 ]; then
+# 执行构建并捕获错误详情
+echo "开始执行 make image 命令..."
+if make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE 2>&1 | tee /tmp/make_output.log; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
+else
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
+    echo "最后50行构建日志:"
+    tail -50 /tmp/make_output.log
     exit 1
 fi
-
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
