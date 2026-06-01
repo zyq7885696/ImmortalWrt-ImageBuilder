@@ -122,7 +122,6 @@ PACKAGES="$PACKAGES luci-app-ddns-go"  # DDNS-GO
 PACKAGES="$PACKAGES luci-app-zerotier"  # ZeroTier
 PACKAGES="$PACKAGES luci-app-openclash"  # OpenClash
 PACKAGES="$PACKAGES luci-app-smartdns"  # SmartDNS
-PACKAGES="$PACKAGES luci-app-mosdns"    # MOSDNS
 
 # 添加本地 Kucat 主题包路径
 if ls /home/build/immortalwrt/packages/kucat/luci-theme-kucat*.ipk 1> /dev/null 2>&1; then
@@ -212,34 +211,6 @@ config domain
     option ip '203.208.40.66'
 SMARTDNS_EOF
     echo "✅ SmartDNS 默认配置已创建"
-fi
-
-# MOSDNS 配置优化
-if echo "$PACKAGES" | grep -q "luci-app-mosdns"; then
-    echo "✅ 已选择 luci-app-mosdns，创建默认配置"
-    mkdir -p /home/build/immortalwrt/files/etc/config
-    # 创建 MOSDNS 配置文件
-    cat << 'MOSDNS_EOF' > /home/build/immortalwrt/files/etc/config/mosdns
-config mosdns
-    option enabled '1'
-    option port '5335'
-    option log_level 'info'
-    option log_file '/var/log/mosdns.log'
-    option config_file '/etc/mosdns/config.yaml'
-
-config dns_forward
-    option name 'default'
-    option server '223.5.5.5'
-    option port '53'
-    option protocol 'udp'
-
-config dns_forward
-    option name 'fallback'
-    option server '8.8.8.8'
-    option port '53'
-    option protocol 'tcp'
-MOSDNS_EOF
-    echo "✅ MOSDNS 默认配置已创建"
 fi
 
 # 构建镜像
