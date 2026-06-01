@@ -1,4 +1,4 @@
-name: 1zbuild-x86-64-immortalwrt-24.10.x
+name: zyqbuild-x86-64-immortalwrt-24.10.x
 
 on:
   workflow_dispatch:
