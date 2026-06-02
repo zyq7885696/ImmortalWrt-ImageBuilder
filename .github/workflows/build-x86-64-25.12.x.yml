@@ -1,27 +1,35 @@
 name: build-x86-64-immortalwrt-25.12.x
+
 on:
   workflow_dispatch:
     inputs:
       luci_version:
-        description: "选择luci版本"
+        description: "选择版本"
         required: false
         default: "25.12.0"
         type: choice
         options:
-          - 25.12.0-rc1
-          - 25.12.0-rc2
           - 25.12.0
+          - 25.12.1
+          - 25.12.2
+          - 25.12.3
+          - 25.12.4
+          - 25.12.5
       custom_router_ip:
         description: "请设置路由器的管理地址(仅对多网口路由器有效) 格式:192.168.x.1 或 10.x.x.1"
         required: true
-        default: "172.16.1.251"
+        default: "192.168.100.1"
       profile:
         description: '请输入要编译固件大小 单位(MB)'
         required: true
-        default: '2048'
+        default: '1024'
+      enable_store:
+        description: "集成 store 商店"
+        required: false
+        type: boolean
+        default: true
       include_docker:
-        description: |
-          是否编译 Docker 插件
+        description: "是否编译 Docker 插件"
         required: true
         default: 'yes'
         type: choice
@@ -34,8 +42,8 @@ on:
         default: 'no'
         type: choice
         options:
-        - 'yes'
-        - 'no'
+          - 'yes'
+          - 'no'
       pppoe_account:
         description: "宽带账号 (若启用PPPoE)"
         required: false
@@ -55,15 +63,171 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set executable permissions
-        run: chmod +x ${{ github.workspace }}/x86-64/build25.sh
+        run: |
+          chmod +x ${{ github.workspace }}/x86-64/build25.sh
+          chmod +x ${{ github.workspace }}/shell/*.sh 2>/dev/null || true
 
-      - name: Save Custom Router IP into OpenWrt files
+      - name: Create custom configuration directory
         run: |
           mkdir -p "${{ github.workspace }}/custom"
+          mkdir -p "${{ github.workspace }}/files/etc/uci-defaults"
+          mkdir -p "${{ github.workspace }}/files/etc/modules.d"
+          
+      - name: Save Custom Router IP
+        run: |
           echo "${{ github.event.inputs.custom_router_ip }}" > "${{ github.workspace }}/custom/custom_router_ip.txt"
           echo "您设置的路由器管理地址是:${{ github.event.inputs.custom_router_ip }}"
-          # 后续步骤会将该文件映射到路由器/etc/config/custom_router_ip.txt 以便用于开机脚本99-custom.sh读取用户设置的ip
-      
+          
+      - name: Create network auto-config script
+        run: |
+          cat > "${{ github.workspace }}/files/etc/uci-defaults/99-fix-network" << 'EOF'
+          #!/bin/sh
+          
+          LOG_FILE="/tmp/network-auto-config.log"
+          echo "$(date): Starting network auto-config for ImmortalWrt 25.12" >> $LOG_FILE
+          
+          . /lib/functions.sh
+          . /lib/functions/uci-defaults.sh
+          . /lib/functions/system.sh
+          
+          # 读取配置
+          if [ -f /etc/config/pppoe-settings ]; then
+              . /etc/config/pppoe-settings
+          fi
+          
+          CUSTOM_IP=""
+          if [ -f /etc/config/custom_router_ip.txt ]; then
+              CUSTOM_IP=$(cat /etc/config/custom_router_ip.txt)
+          fi
+          [ -z "$CUSTOM_IP" ] && CUSTOM_IP="192.168.100.1"
+          
+          # ============= 禁用 IPv6 ===============
+          echo "$(date): Disabling IPv6" >> $LOG_FILE
+          uci set network.globals='globals'
+          uci set network.globals.ula_prefix=''
+          uci commit network
+          
+          cat >> /etc/sysctl.conf << 'SYSCTL'
+          net.ipv6.conf.all.disable_ipv6=1
+          net.ipv6.conf.default.disable_ipv6=1
+          net.ipv6.conf.lo.disable_ipv6=1
+          SYSCTL
+          sysctl -p > /dev/null 2>&1
+          
+          cat > /etc/modules.d/disable-ipv6 << 'MODS'
+          blacklist ipv6
+          blacklist sit
+          MODS
+          
+          # 检测网卡数量
+          NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -E '^(eth|lan|wan)[0-9]*$' | grep -v 'lo' | wc -l)
+          echo "$(date): Detected $NIC_COUNT NIC(s)" >> $LOG_FILE
+          
+          if [ "$NIC_COUNT" -eq 1 ]; then
+              NIC_NAME=$(ls /sys/class/net/ | grep -E '^(eth|lan|wan)' | head -1)
+              [ -z "$NIC_NAME" ] && NIC_NAME=$(ls /sys/class/net/ | grep -v 'lo' | head -1)
+              
+              uci set network.lan.device="$NIC_NAME"
+              uci set network.lan.proto='static'
+              uci set network.lan.ipaddr="$CUSTOM_IP"
+              uci set network.lan.netmask='255.255.255.0'
+              
+              # 禁用 WAN
+              uci set network.wan=interface
+              uci set network.wan.proto='none'
+              
+              echo "$(date): Single NIC configured: $CUSTOM_IP on $NIC_NAME" >> $LOG_FILE
+          else
+              if [ "$enable_pppoe" = "yes" ]; then
+                  uci set network.wan=interface
+                  uci set network.wan.device='eth0'
+                  uci set network.wan.proto='pppoe'
+                  uci set network.wan.username="$pppoe_account"
+                  uci set network.wan.password="$pppoe_password"
+                  uci set network.wan.ipv6='0'
+                  echo "$(date): PPPoE configured on eth0" >> $LOG_FILE
+              else
+                  uci set network.wan=interface
+                  uci set network.wan.device='eth0'
+                  uci set network.wan.proto='dhcp'
+                  uci set network.wan.ipv6='0'
+              fi
+              
+              uci set network.lan=interface
+              uci set network.lan.device='eth1'
+              uci set network.lan.proto='static'
+              uci set network.lan.ipaddr="$CUSTOM_IP"
+              uci set network.lan.netmask='255.255.255.0'
+              
+              echo "$(date): Multiple NICs configured, LAN IP: $CUSTOM_IP" >> $LOG_FILE
+          fi
+          
+          # 禁用 DHCP
+          uci set dhcp.lan.ignore='1'
+          uci set dhcp.lan.dynamicdhcp='0'
+          
+          # 禁用 odhcpd
+          if [ -f /etc/init.d/odhcpd ]; then
+              /etc/init.d/odhcpd disable
+              /etc/init.d/odhcpd stop
+          fi
+          
+          uci commit network
+          uci commit dhcp
+          
+          service network restart
+          service dnsmasq restart 2>/dev/null
+          
+          echo "$(date): Network config completed (IPv6/DHCP disabled)" >> $LOG_FILE
+          exit 0
+          EOF
+          
+          chmod +x "${{ github.workspace }}/files/etc/uci-defaults/99-fix-network"
+          
+      - name: Create BBR config script
+        run: |
+          cat > "${{ github.workspace }}/files/etc/uci-defaults/98-bbr-enable" << 'EOF'
+          #!/bin/sh
+          # 启用 BBR 拥塞控制算法 (ImmortalWrt 25.12 内核默认支持)
+          
+          sleep 3
+          
+          for i in 1 2 3 4 5; do
+              if [ -f /proc/sys/net/ipv4/tcp_available_congestion_control ]; then
+                  break
+              fi
+              sleep 1
+          done
+          
+          if [ -f /proc/sys/net/ipv4/tcp_congestion_control ]; then
+              AVAILABLE=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
+              echo "$(date): Available congestion controls: $AVAILABLE" >> /tmp/bbr-setup.log
+              
+              if echo "$AVAILABLE" | grep -q "bbr"; then
+                  echo "bbr" > /proc/sys/net/ipv4/tcp_congestion_control
+                  echo "fq" > /proc/sys/net/core/default_qdisc 2>/dev/null || echo "fq_codel" > /proc/sys/net/core/default_qdisc
+                  
+                  sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
+                  sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
+                  echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+                  echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
+                  
+                  sysctl -p > /dev/null 2>&1
+                  
+                  CURRENT=$(cat /proc/sys/net/ipv4/tcp_congestion_control)
+                  echo "$(date): BBR enabled, current: $CURRENT" >> /tmp/bbr-setup.log
+                  echo "✅ BBR 加速已启用 (当前算法: $CURRENT)" > /dev/console
+              else
+                  echo "$(date): BBR not available. Available: $AVAILABLE" >> /tmp/bbr-setup.log
+                  echo "⚠️ BBR 不可用" > /dev/console
+              fi
+          fi
+          exit 0
+          EOF
+          
+          chmod +x "${{ github.workspace }}/files/etc/uci-defaults/98-bbr-enable"
+          echo "✅ BBR 配置脚本已创建"
+          
       - name: Validate PPPoE Inputs
         run: |
           if [[ "${{ inputs.enable_pppoe }}" == "yes" ]]; then
@@ -72,19 +236,29 @@ jobs:
               exit 1
             fi
           fi
+      
+      - name: Enable Store integration
+        run: |
+          if [ "${{ github.event.inputs.enable_store }}" == "true" ]; then
+            echo 'CUSTOM_PACKAGES="$CUSTOM_PACKAGES luci-app-store"' >> shell/custom-packages.sh
+            echo "✅ 已追加 luci-app-store"
+          else
+            echo "❎ 未启用 luci-app-store"
+          fi
 
-      - name: Build ImmortalWrt-x86-64-efi 25.12.x
+      - name: Build ImmortalWrt-x86-64 25.12.x
         run: |
           profile="${{ github.event.inputs.profile }}"
           include_docker="${{ github.event.inputs.include_docker }}"
           luci_version="${{ github.event.inputs.luci_version }}"
           echo "Building for profile: $profile"
+          echo "Using version: $luci_version"
+          
           docker run --rm -i \
             --user root \
             -v "${{ github.workspace }}/bin:/home/build/immortalwrt/bin" \
             -v "${{ github.workspace }}/files:/home/build/immortalwrt/files" \
             -v "${{ github.workspace }}/custom:/home/build/immortalwrt/files/etc/config" \
-            -v "${{ github.workspace }}/x86-64/imm25.config:/home/build/immortalwrt/.config" \
             -v "${{ github.workspace }}/shell:/home/build/immortalwrt/shell" \
             -v "${{ github.workspace }}/x86-64/build25.sh:/home/build/immortalwrt/build.sh" \
             -e PROFILE=$profile \
@@ -92,8 +266,7 @@ jobs:
             -e ENABLE_PPPOE=${{ inputs.enable_pppoe }} \
             -e PPPOE_ACCOUNT=${{ inputs.pppoe_account }} \
             -e PPPOE_PASSWORD=${{ inputs.pppoe_password }} \
-          immortalwrt/imagebuilder:x86-64-openwrt-${luci_version} /bin/bash /home/build/immortalwrt/build.sh
-          
+            immortalwrt/imagebuilder:x86-64-openwrt-${luci_version} /bin/bash /home/build/immortalwrt/build.sh
 
       - name: Create info
         run: |
@@ -106,22 +279,38 @@ jobs:
           - 🏠 **后台地址**: ${{ github.event.inputs.custom_router_ip }}
           - 👤 **用户名**: root
           - 🔑 **密码**: 无
+          - 🔧 **网络配置**: 自动检测网卡数量并配置
+            - 单网卡: 自动设置为固定IP (${{ github.event.inputs.custom_router_ip }})
+            - 多网卡: LAN口使用指定IP，WAN口使用DHCP/PPPoE
+          - 🚀 **BBR加速**: 已启用 (内核原生支持)
+          - 📦 **包管理器**: APK (新版)
+          
+          ## 📦 可用镜像类型
+          - **SQUASHFS**: 可恢复出厂设置，支持配置重置
+          - **rootfs**: 适用于容器环境或自定义分区
+          - **combined-efi**: 适用于 UEFI 启动的 squashfs 镜像
+          
+          ## 🌐 网络说明
+          - **单网卡设备**: 固件会自动检测并将唯一网卡设置为LAN口，使用固定IP: ${{ github.event.inputs.custom_router_ip }}
+          - **多网卡设备**: eth0为WAN口，eth1为LAN口，LAN口IP为: ${{ github.event.inputs.custom_router_ip }}
+          
+          ## 🚀 BBR 加速
+          BBR 拥塞控制算法已在内核中启用，可提升网络性能。
           EOF
 
           if [ "${{ github.event.inputs.include_docker }}" == "yes" ]; then
-            extra_content="#### 默认带docker"
-            echo -e "\n$extra_content" >> ${{ github.workspace }}/router-info.md
+            echo -e "\n#### ✅ 默认带 Docker 支持" >> ${{ github.workspace }}/router-info.md
           else
-            echo -e "\n#### 不带docker" >> ${{ github.workspace }}/router-info.md
+            echo -e "\n#### ❌ 不带 Docker 支持" >> ${{ github.workspace }}/router-info.md
           fi
 
-      - name: Upload ImmortWrt as release assets
+      - name: Upload ImmortalWrt as release assets
         uses: softprops/action-gh-release@v2.2.1
         with:
-          tag_name: Autobuild-x86-64
+          tag_name: Autobuild-x86-64-25.12
           body_path: ${{ github.workspace }}/router-info.md
           files: |
             ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined-efi.img.gz
+            ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined.img.gz
+            ${{ github.workspace }}/bin/targets/x86/64/*rootfs.tar.gz
           token: ${{ secrets.GITHUB_TOKEN }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
