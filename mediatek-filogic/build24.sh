@@ -3,6 +3,7 @@ source shell/custom-packages.sh
 source shell/switch_repository.sh
 # 该文件实际为imagebuilder容器内的build.sh
 
+#echo "✅ 你选择了第三方软件包：$CUSTOM_PACKAGES"
 # 下载 run 文件仓库
 echo "🔄 正在同步第三方软件仓库 Cloning run file repo..."
 git clone --depth=1 https://github.com/wukongdaily/store.git /tmp/store-run-repo
@@ -45,37 +46,23 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting build process..."
 PACKAGES=""
 PACKAGES="$PACKAGES curl luci luci-i18n-base-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
-# 移除 luci-theme-argon
-# PACKAGES="$PACKAGES luci-theme-argon"
-# PACKAGES="$PACKAGES luci-app-argon-config"
-# PACKAGES="$PACKAGES luci-i18n-argon-config-zh-cn"
-# 移除 diskman
-# PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
-# 移除 ttyd
-# PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
 PACKAGES="$PACKAGES openssh-sftp-server"
-# 文件管理器（可选保留）
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 
-# 添加 DDNS-GO
-PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
-# 添加 ZeroTier
-PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
-
-# 下载并安装 Kucat 主题和相关包
+# 下载并安装 Kucat 主题及相关包
 echo "🔄 正在下载 Kucat 主题及相关包..."
 mkdir -p /home/build/immortalwrt/kucat-packages
 cd /home/build/immortalwrt/kucat-packages
 
 # 下载 Kucat 主题
-wget https://github.com/sirpdboy/luci-theme-kucat/releases/download/v3.3.0/luci-theme-kucat_3.3.0-r20260227_all.ipk
+wget -q https://github.com/sirpdboy/luci-theme-kucat/releases/download/v3.3.0/luci-theme-kucat_3.3.0-r20260227_all.ipk
 # 下载 Kucat 配置应用
-wget https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-app-kucat-config_2.2.0-r20260227_all.ipk
+wget -q https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-app-kucat-config_2.2.0-r20260227_all.ipk
 # 下载 Kucat 中文语言包
-wget https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-i18n-kucat-config-zh-cn_0_all.ipk
+wget -q https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-i18n-kucat-config-zh-cn_0_all.ipk
 
 # 将下载的 ipk 文件复制到 packages 目录
-cp *.ipk /home/build/immortalwrt/packages/
+cp *.ipk /home/build/immortalwrt/packages/ 2>/dev/null
 cd /home/build/immortalwrt
 
 echo "✅ Kucat 主题包已下载并复制到 packages 目录"
@@ -96,40 +83,39 @@ if [ "$INCLUDE_DOCKER" = "yes" ]; then
     echo "Adding package: luci-i18n-dockerman-zh-cn"
 fi
 
-# 添加 OpenClash
-echo "✅ 添加 luci-app-openclash"
-PACKAGES="$PACKAGES luci-app-openclash"
-
-# 创建 OpenClash 内核目录
-mkdir -p files/etc/openclash/core
-
-# Download clash_meta for ARM64 (Nx30 pro 使用 aarch64)
-META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz"
-wget -qO- $META_URL | tar xOvz > files/etc/openclash/core/clash_meta
-chmod +x files/etc/openclash/core/clash_meta
-
-# Download GeoIP and GeoSite
-wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
-wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
-
-# Download latest openclash Client
-URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases/latest \
-  | grep "browser_download_url.*ipk" \
-  | head -n1 \
-  | cut -d '"' -f 4)
-echo "OpenClash latest ipk: $URL"
-wget "$URL" -P /home/build/immortalwrt/packages/
-
-# 添加 Kucat 包到安装列表
-PACKAGES="$PACKAGES luci-theme-kucat luci-app-kucat-config luci-i18n-kucat-config-zh-cn"
+# 为 OpenClash 添加内核（如果选择了 OpenClash）
+if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
+    echo "✅ 已选择 luci-app-openclash，添加 openclash core"
+    mkdir -p files/etc/openclash/core
+    # Download clash_meta for ARM64
+    META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz"
+    wget -qO- $META_URL | tar xOvz > files/etc/openclash/core/clash_meta
+    chmod +x files/etc/openclash/core/clash_meta
+    # Download GeoIP and GeoSite
+    wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
+    wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
+    # Download latest openclash Client (if not already in packages)
+    if ! ls /home/build/immortalwrt/packages/luci-app-openclash*.ipk 2>/dev/null | grep -q .; then
+        URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases/latest \
+          | grep "browser_download_url.*ipk" \
+          | head -n1 \
+          | cut -d '"' -f 4)
+        echo "OpenClash latest ipk: $URL"
+        wget -q "$URL" -P /home/build/immortalwrt/packages/
+    fi
+else
+    echo "⚪️ 未选择 luci-app-openclash"
+fi
 
 # 创建 UCI 默认配置脚本，设置 Kucat 为默认主题
 mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
 cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-default-theme
 #!/bin/sh
 # 设置 Kucat 为默认主题
-uci set luci.main.mediaurlbase='/luci-static/kucat'
-uci commit luci
+if uci get luci.main.mediaurlbase >/dev/null 2>&1; then
+    uci set luci.main.mediaurlbase='/luci-static/kucat'
+    uci commit luci
+fi
 exit 0
 EOF
 
