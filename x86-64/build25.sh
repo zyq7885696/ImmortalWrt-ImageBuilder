@@ -292,13 +292,13 @@ PACKAGES="$PACKAGES luci-app-openclash"  # OpenClash
 # PACKAGES="$PACKAGES luci-app-smartdns"  # SmartDNS
 # PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"  # SmartDNS 中文语言包
 
-# 添加本地 Kucat 主题包路径
-if ls /home/build/immortalwrt/kucat-packages/luci-theme-kucat*.ipk 1> /dev/null 2>&1; then
-    mkdir -p /home/build/immortalwrt/extra-packages-local
-    cp /home/build/immortalwrt/kucat-packages/*.ipk /home/build/immortalwrt/extra-packages-local/
-    PACKAGES="$PACKAGES luci-theme-kucat"
-    PACKAGES="$PACKAGES luci-app-kucat-config"
-    PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn"
+# Kucat 主题已手动解压到 files 目录，不需要添加到包列表
+# 验证文件是否已正确解压
+if [ -d "/home/build/immortalwrt/files/usr/lib/lua/luci/view/kucat" ] || \
+   [ -d "/home/build/immortalwrt/files/www/luci-static/kucat" ]; then
+    echo "✅ Kucat 主题文件已存在于 files 目录"
+else
+    echo "⚠️ 警告: Kucat 主题文件可能未正确解压"
 fi
 
 # ======== shell/apk-custom-packages.sh =======
