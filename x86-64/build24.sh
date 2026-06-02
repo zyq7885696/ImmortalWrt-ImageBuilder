@@ -21,173 +21,250 @@ EOF
 echo "cat pppoe-settings"
 cat /home/build/immortalwrt/files/etc/config/pppoe-settings
 
-# ============= 创建单网卡自动配置脚本 ===============
-echo "🔧 创建网络自动配置脚本（支持单网卡自动固定IP）"
+# ============= 下载 kucat 主题和相关插件 =============
+echo "🔄 正在下载 kucat 主题和相关插件..."
+mkdir -p /home/build/immortalwrt/kucat-packages
+cd /home/build/immortalwrt/kucat-packages
+
+# 下载 kucat 主题和插件
+echo "下载 luci-theme-kucat..."
+wget -q --show-progress https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-theme-kucat_2.2.0_all.ipk
+
+echo "下载 luci-i18n-kucat-config-zh-cn..."
+wget -q --show-progress https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-i18n-kucat-config-zh-cn_0_all.ipk
+
+echo "下载 luci-app-kucat-config..."
+wget -q --show-progress https://github.com/sirpdboy/luci-theme-kucat/releases/latest/download/luci-app-kucat-config_2.2.0-r20260227_all.ipk
+
+# 检查下载是否成功
+echo "下载的文件列表:"
+ls -lh *.ipk
+
+# 解压 ipk 文件到 files 目录
+for ipk in *.ipk; do
+    if [ -f "$ipk" ]; then
+        echo "正在解压 $ipk..."
+        # 创建临时目录
+        TEMP_DIR=$(mktemp -d)
+        cd $TEMP_DIR
+        
+        # 解压 ipk (ipk 是 ar 归档格式)
+        ar x /home/build/immortalwrt/kucat-packages/"$ipk"
+        
+        # 解压 data.tar.gz
+        if [ -f data.tar.gz ]; then
+            tar -xzf data.tar.gz -C /home/build/immortalwrt/files/
+            echo "✅ 已解压 $ipk 的内容到 files 目录"
+        elif [ -f data.tar.xz ]; then
+            tar -xJf data.tar.xz -C /home/build/immortalwrt/files/
+            echo "✅ 已解压 $ipk 的内容到 files 目录"
+        else
+            echo "⚠️ 找不到 data.tar.gz 或 data.tar.xz"
+        fi
+        
+        cd /home/build/immortalwrt
+        rm -rf $TEMP_DIR
+    fi
+done
+
+# 创建默认主题配置文件
 mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
-
-# 读取用户设置的路由器管理地址
-CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null || echo "192.168.100.1")
-echo "路由器管理地址: $CUSTOM_ROUTER_IP"
-
-cat << 'NETWORK_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-fix-network
+cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 #!/bin/sh
-
-# 日志文件
-LOG_FILE="/tmp/network-auto-config.log"
-echo "$(date): Starting network auto-config script" >> $LOG_FILE
-
-# 读取PPPoE配置
-if [ -f /etc/config/pppoe-settings ]; then
-    source /etc/config/pppoe-settings
-    echo "$(date): Loaded PPPoE settings - ENABLE_PPPOE=$enable_pppoe" >> $LOG_FILE
-fi
-
-# 读取自定义路由器IP
-CUSTOM_IP=""
-if [ -f /etc/config/custom_router_ip.txt ]; then
-    CUSTOM_IP=$(cat /etc/config/custom_router_ip.txt)
-    echo "$(date): Loaded custom router IP: $CUSTOM_IP" >> $LOG_FILE
-fi
-
-# 如果没读取到，使用默认值
-if [ -z "$CUSTOM_IP" ]; then
-    CUSTOM_IP="192.168.100.1"
-    echo "$(date): Using default router IP: $CUSTOM_IP" >> $LOG_FILE
-fi
-
-# 检测网卡数量
-NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -E '^eth[0-9]+$' | wc -l)
-echo "$(date): Detected $NIC_COUNT network interface(s)" >> $LOG_FILE
-
-# 如果有网络接口但数量为0，尝试其他命名方式
-if [ "$NIC_COUNT" -eq 0 ]; then
-    NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -v 'lo' | wc -l)
-    echo "$(date): Alternative detection found $NIC_COUNT interface(s)" >> $LOG_FILE
-fi
-
-# 单网卡处理
-if [ "$NIC_COUNT" -eq 1 ]; then
-    echo "$(date): Single NIC detected, configuring static IP" >> $LOG_FILE
-    
-    # 获取网卡名称
-    NIC_NAME=$(ls /sys/class/net/ 2>/dev/null | grep -E '^eth[0-9]+$' | head -1)
-    if [ -z "$NIC_NAME" ]; then
-        NIC_NAME=$(ls /sys/class/net/ 2>/dev/null | grep -v 'lo' | head -1)
-    fi
-    
-    echo "$(date): Using network interface: $NIC_NAME" >> $LOG_FILE
-    
-    # 备份原始配置
-    if [ -f /etc/config/network ]; then
-        cp /etc/config/network /etc/config/network.backup
-    fi
-    
-    # 配置单网卡为LAN口，使用静态IP
-    cat > /etc/config/network << EOF
-config interface 'loopback'
-        option device 'lo'
-        option proto 'static'
-        option ipaddr '127.0.0.1'
-        option netmask '255.0.0.0'
-
-config interface 'lan'
-        option device '$NIC_NAME'
-        option proto 'static'
-        option ipaddr '$CUSTOM_IP'
-        option netmask '255.255.255.0'
-        option ip6assign '60'
-EOF
-    
-    # 如果启用了PPPoE，单网卡模式下PPPoE可能不适用，给出警告
-    if [ "$enable_pppoe" = "yes" ]; then
-        echo "$(date): WARNING: PPPoE is enabled but single NIC detected. PPPoE may not work properly." >> $LOG_FILE
-    fi
-    
-    echo "$(date): Single NIC configured with static IP: $CUSTOM_IP" >> $LOG_FILE
-    
-else
-    echo "$(date): Multiple NICs detected ($NIC_COUNT), using standard configuration" >> $LOG_FILE
-    
-    # 多网卡情况，保持标准配置
-    if [ "$enable_pppoe" = "yes" ]; then
-        echo "$(date): Configuring PPPoE on WAN interface" >> $LOG_FILE
-        
-        cat > /etc/config/network << EOF
-config interface 'loopback'
-        option device 'lo'
-        option proto 'static'
-        option ipaddr '127.0.0.1'
-        option netmask '255.0.0.0'
-
-config interface 'wan'
-        option device 'eth0'
-        option proto 'pppoe'
-        option username '$pppoe_account'
-        option password '$pppoe_password'
-        option ipv6 'auto'
-
-config interface 'wan6'
-        option device 'eth0'
-        option proto 'dhcpv6'
-
-config interface 'lan'
-        option device 'eth1'
-        option proto 'static'
-        option ipaddr '$CUSTOM_IP'
-        option netmask '255.255.255.0'
-        option ip6assign '60'
-EOF
-        echo "$(date): PPPoE configured on eth0" >> $LOG_FILE
-    else
-        echo "$(date): Using standard DHCP configuration on WAN" >> $LOG_FILE
-        
-        cat > /etc/config/network << EOF
-config interface 'loopback'
-        option device 'lo'
-        option proto 'static'
-        option ipaddr '127.0.0.1'
-        option netmask '255.0.0.0'
-
-config interface 'wan'
-        option device 'eth0'
-        option proto 'dhcp'
-
-config interface 'wan6'
-        option device 'eth0'
-        option proto 'dhcpv6'
-
-config interface 'lan'
-        option device 'eth1'
-        option proto 'static'
-        option ipaddr '$CUSTOM_IP'
-        option netmask '255.255.255.0'
-        option ip6assign '60'
-EOF
-    fi
-    
-    echo "$(date): Multiple NIC configuration completed" >> $LOG_FILE
-fi
-
-# 提交配置
-uci commit network
-
-# 重启网络服务
-/etc/init.d/network restart
-
-echo "$(date): Network configuration completed" >> $LOG_FILE
+# 设置 kucat 为默认主题
+uci set luci.main.mediaurlbase='/luci-static/kucat'
+uci commit luci
 exit 0
-NETWORK_EOF
+EOF
+chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 
-chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-fix-network
-echo "✅ 网络自动配置脚本已创建"
+# 验证文件是否已正确复制
+echo "验证 kucat 主题文件是否已复制:"
+find /home/build/immortalwrt/files -name "*kucat*" -type f 2>/dev/null | head -20
 
-# 保存自定义路由器IP到文件
-if [ -n "$CUSTOM_ROUTER_IP" ] && [ "$CUSTOM_ROUTER_IP" != "192.168.100.1" ]; then
-    echo "$CUSTOM_ROUTER_IP" > /home/build/immortalwrt/files/etc/config/custom_router_ip.txt
-    echo "✅ 自定义路由器IP已保存: $CUSTOM_ROUTER_IP"
+echo "✅ kucat 主题和相关插件已解压到 files 目录"
+
+# ============= 下载和配置 MOSDNS ===============
+echo "🌐 正在配置 MOSDNS..."
+
+# 检查并安装 unzip（如果需要）
+if ! command -v unzip &> /dev/null; then
+    echo "安装 unzip 工具..."
+    sudo apt-get update && sudo apt-get install -y unzip
 fi
 
-# ============= 原有代码继续 =============
+# 创建 MOSDNS 相关目录
+mkdir -p /home/build/immortalwrt/packages/mosdns
+mkdir -p /home/build/immortalwrt/files/usr/bin
+mkdir -p /home/build/immortalwrt/files/usr/share/v2ray
+mkdir -p /home/build/immortalwrt/files/etc/mosdns
+mkdir -p /home/build/immortalwrt/files/etc/init.d
+
+# 1. 下载 luci-app-mosdns
+echo "正在下载 luci-app-mosdns..."
+wget --no-check-certificate -q --show-progress -O /home/build/immortalwrt/packages/mosdns/luci-app-mosdns_all.ipk \
+    https://github.com/sbwml/luci-app-mosdns/releases/latest/download/luci-app-mosdns_all.ipk
+
+# 2. 下载中文语言包
+echo "正在下载 luci-i18n-mosdns-zh-cn..."
+wget --no-check-certificate -q --show-progress -O /home/build/immortalwrt/packages/mosdns/luci-i18n-mosdns-zh-cn_all.ipk \
+    https://github.com/sbwml/luci-app-mosdns/releases/latest/download/luci-i18n-mosdns-zh-cn_all.ipk
+
+# 3. 下载 mosdns 主程序
+echo "正在下载 mosdns 主程序..."
+MOSDNS_VERSION=$(curl -s https://api.github.com/repos/IrineSistiana/mosdns/releases/latest | grep "tag_name" | cut -d '"' -f 4 | sed 's/v//')
+echo "最新 mosdns 版本: v$MOSDNS_VERSION"
+wget --no-check-certificate -q --show-progress -O /tmp/mosdns.zip \
+    "https://github.com/IrineSistiana/mosdns/releases/download/v${MOSDNS_VERSION}/mosdns-linux-amd64.zip"
+
+# 解压 mosdns
+unzip -j /tmp/mosdns.zip "mosdns" -d /home/build/immortalwrt/files/usr/bin/
+chmod +x /home/build/immortalwrt/files/usr/bin/mosdns
+echo "✅ mosdns 主程序已安装"
+
+# 4. 下载 v2dat 工具
+echo "正在下载 v2dat 工具..."
+V2DAT_VERSION=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep "tag_name" | cut -d '"' -f 4 | sed 's/v//')
+echo "最新 Xray-core 版本: v$V2DAT_VERSION"
+wget --no-check-certificate -q --show-progress -O /tmp/xray.zip \
+    "https://github.com/XTLS/Xray-core/releases/download/v${V2DAT_VERSION}/Xray-linux-64.zip"
+
+# 解压获取 v2dat
+unzip -j /tmp/xray.zip "v2dat" -d /home/build/immortalwrt/files/usr/bin/
+chmod +x /home/build/immortalwrt/files/usr/bin/v2dat
+echo "✅ v2dat 工具已安装"
+
+# 5. 下载 v2ray-geoip 和 v2ray-geosite 数据库
+echo "正在下载 v2ray-geoip 和 v2ray-geosite 数据..."
+wget --no-check-certificate -q --show-progress -O /home/build/immortalwrt/files/usr/share/v2ray/geoip.dat \
+    https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+wget --no-check-certificate -q --show-progress -O /home/build/immortalwrt/files/usr/share/v2ray/geosite.dat \
+    https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
+echo "✅ GeoIP/GeoSite 数据库已下载"
+
+# 6. 解压 MOSDNS 的 IPK 包到 files 目录
+echo "正在解压 MOSDNS IPK 包..."
+for ipk in /home/build/immortalwrt/packages/mosdns/*.ipk; do
+    if [ -f "$ipk" ]; then
+        echo "解压: $(basename $ipk)"
+        TEMP_DIR=$(mktemp -d)
+        cd $TEMP_DIR
+        ar x "$ipk"
+        if [ -f data.tar.gz ]; then
+            tar -xzf data.tar.gz -C /home/build/immortalwrt/files/
+        elif [ -f data.tar.xz ]; then
+            tar -xJf data.tar.xz -C /home/build/immortalwrt/files/
+        fi
+        cd /home/build/immortalwrt
+        rm -rf $TEMP_DIR
+    fi
+done
+
+# 7. 创建 mosdns 基础配置文件
+cat << 'MOSDNS_EOF' > /home/build/immortalwrt/files/etc/mosdns/config.yaml
+# MosDNS 基础配置
+log:
+  level: info
+  file: "/var/log/mosdns.log"
+
+data_providers:
+  - tag: geoip
+    file: /usr/share/v2ray/geoip.dat
+    auto_reload: true
+  - tag: geosite
+    file: /usr/share/v2ray/geosite.dat
+    auto_reload: true
+
+plugins:
+  - tag: forward_remote
+    type: forward
+    args:
+      upstreams:
+        - addr: "https://dns.google/dns-query"
+        - addr: "https://cloudflare-dns.com/dns-query"
+      dial_addr: "8.8.8.8:53"
+
+  - tag: forward_local
+    type: forward
+    args:
+      upstreams:
+        - addr: "223.5.5.5"
+        - addr: "119.29.29.29"
+        
+  - tag: local_sequence
+    type: sequence
+    args:
+      - exec: $forward_local
+      
+  - tag: remote_sequence
+    type: sequence
+    args:
+      - exec: $forward_remote
+
+  - tag: query_matcher
+    type: query_matcher
+    args:
+      domain:
+        - 'geosite:cn'
+      exec: $local_sequence
+      continue: true
+      
+  - tag: geoip_matcher
+    type: ip_matcher
+    args:
+      ip:
+        - 'geoip:cn'
+      exec: $local_sequence
+      continue: true
+      
+  - tag: main_router
+    type: sequence
+    args:
+      - exec: $query_matcher
+      - exec: $geoip_matcher
+      - exec: $remote_sequence
+      
+listeners:
+  - protocol: udp
+    addr: "0.0.0.0:5353"
+    exec: $main_router
+  - protocol: tcp
+    addr: "0.0.0.0:5353"
+    exec: $main_router
+MOSDNS_EOF
+
+# 8. 创建 mosdns 初始化脚本
+cat << 'MOSDNS_INIT_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-mosdns-setup
+#!/bin/sh
+# MOSDNS 初始化配置
+
+# 创建必要目录
+mkdir -p /usr/share/v2ray
+mkdir -p /etc/mosdns
+mkdir -p /var/log
+
+# 确保 geoip/geosite 文件存在
+[ -f /usr/share/v2ray/geoip.dat ] || cp /etc/mosdns/geoip.dat /usr/share/v2ray/geoip.dat 2>/dev/null
+[ -f /usr/share/v2ray/geosite.dat ] || cp /etc/mosdns/geosite.dat /usr/share/v2ray/geosite.dat 2>/dev/null
+
+# 设置 mosdns 开机自启
+if [ -f /etc/init.d/mosdns ]; then
+    /etc/init.d/mosdns enable
+fi
+
+exit 0
+MOSDNS_INIT_EOF
+
+chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-mosdns-setup
+
+# 清理临时文件
+rm -f /tmp/mosdns.zip /tmp/xray.zip
+
+echo "✅ MOSDNS 组件配置完成"
+ls -lh /home/build/immortalwrt/files/usr/bin/mosdns 2>/dev/null
+ls -lh /home/build/immortalwrt/files/usr/bin/v2dat 2>/dev/null
+
+cd /home/build/immortalwrt
 
 if [ -z "$CUSTOM_PACKAGES" ]; then
   echo "⚪️ 未选择 任何第三方软件包"
@@ -211,67 +288,16 @@ fi
 # 输出调试信息
 echo "$(date '+%Y-%m-%d %H:%M:%S') - 开始构建固件..."
 
-# ============= 下载指定版本的 Kucat 主题 ===============
-echo "🎨 正在下载 Kucat 主题 v3.3.0..."
-
-# 创建 Kucat 包目录
-mkdir -p /home/build/immortalwrt/packages/kucat
-
-# 下载主题包
-echo "正在下载 luci-theme-kucat..."
-wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-theme-kucat_3.3.0-r20260227_all.ipk \
-    https://github.com/sirpdboy/luci-theme-kucat/releases/download/v3.3.0/luci-theme-kucat_3.3.0-r20260227_all.ipk
-
-if [ $? -eq 0 ] && [ -f /home/build/immortalwrt/packages/kucat/luci-theme-kucat_3.3.0-r20260227_all.ipk ]; then
-    echo "✅ 主题包下载成功"
-else
-    echo "❌ 主题包下载失败"
-fi
-
-# 下载配置应用
-echo "正在下载 luci-app-kucat-config..."
-wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-app-kucat-config_2.2.0-r20260227_all.ipk \
-    https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-app-kucat-config_2.2.0-r20260227_all.ipk
-
-if [ $? -eq 0 ] && [ -f /home/build/immortalwrt/packages/kucat/luci-app-kucat-config_2.2.0-r20260227_all.ipk ]; then
-    echo "✅ 配置应用下载成功"
-else
-    echo "❌ 配置应用下载失败"
-fi
-
-# 下载语言包
-echo "正在下载 luci-i18n-kucat-config-zh-cn..."
-wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-i18n-kucat-config-zh-cn_0_all.ipk \
-    https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-i18n-kucat-config-zh-cn_0_all.ipk
-
-if [ $? -eq 0 ] && [ -f /home/build/immortalwrt/packages/kucat/luci-i18n-kucat-config-zh-cn_0_all.ipk ]; then
-    echo "✅ 语言包下载成功"
-else
-    echo "❌ 语言包下载失败"
-fi
-
-# 记录下载的包文件
-ls -lh /home/build/immortalwrt/packages/kucat/ > /home/build/immortalwrt/packages/kucat/kucat_packages.txt
-
-# 设置默认主题为 Kucat
-cat << 'THEME_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
-#!/bin/sh
-# 设置 Kucat 为默认主题
-uci set luci.main.mediaurlbase='/luci-static/kucat'
-uci commit luci
-exit 0
-THEME_EOF
-chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
-
-echo "✅ Kucat 主题安装完成并设置为默认主题"
-ls -lh /home/build/immortalwrt/packages/kucat/
-
 # ============= imm仓库内的插件==============
-# 定义所需安装的包列表
+# 定义所需安装的包列表 下列插件你都可以自行删减
 PACKAGES=""
 PACKAGES="$PACKAGES curl"
 PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
+# 注意：kucat 主题已被解压到 files 目录，不需要在 PACKAGES 中声明
+# 只需要包含 luci 基础包
+PACKAGES="$PACKAGES luci"
+#24.10
 PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
 PACKAGES="$PACKAGES openssh-sftp-server"
@@ -279,25 +305,29 @@ PACKAGES="$PACKAGES openssh-sftp-server"
 # 文件管理器
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 
-# 新增插件
-PACKAGES="$PACKAGES luci-app-ddns-go"  # DDNS-GO
-PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"  # DDNS-GO 中文语言包
-PACKAGES="$PACKAGES luci-app-zerotier"  # ZeroTier
-PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"  # ZeroTier 中文语言包
-PACKAGES="$PACKAGES luci-app-openclash"  # OpenClash
-# PACKAGES="$PACKAGES luci-app-smartdns"  # SmartDNS
-# PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"  # SmartDNS 中文语言包
+# ============ 新增 SmartDNS 插件 ============
+# SmartDNS - 智能DNS解析加速，提升网络访问速度
+# PACKAGES="$PACKAGES luci-app-smartdns"
+# PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"
+# PACKAGES="$PACKAGES smartdns"
 
-# 添加本地 Kucat 主题包路径
-if ls /home/build/immortalwrt/packages/kucat/luci-theme-kucat*.ipk 1> /dev/null 2>&1; then
-    # 将本地包路径添加到构建系统
-    mkdir -p /home/build/immortalwrt/extra-packages-local
-    cp /home/build/immortalwrt/packages/kucat/*.ipk /home/build/immortalwrt/extra-packages-local/
-    # 使用本地包
-    PACKAGES="$PACKAGES luci-theme-kucat"
-    PACKAGES="$PACKAGES luci-app-kucat-config"
-    PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn"
-fi
+# ============ 新增 MOSDNS 插件 ============
+# MOSDNS - DNS 分流工具（只添加 luci 包，二进制已手动添加）
+PACKAGES="$PACKAGES luci-app-mosdns"
+PACKAGES="$PACKAGES luci-i18n-mosdns-zh-cn"
+
+# OpenClash - 代理客户端
+PACKAGES="$PACKAGES luci-app-openclash"
+
+# ZeroTier - 虚拟组网
+PACKAGES="$PACKAGES luci-app-zerotier"
+PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
+PACKAGES="$PACKAGES zerotier"
+
+# DDNS-GO - 动态域名解析
+PACKAGES="$PACKAGES luci-app-ddns-go"
+PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
+PACKAGES="$PACKAGES ddns-go"
 
 # ======== shell/custom-packages.sh =======
 # 合并imm仓库以外的第三方插件
@@ -309,96 +339,110 @@ if [ "$INCLUDE_DOCKER" = "yes" ]; then
     echo "Adding package: luci-i18n-dockerman-zh-cn"
 fi
 
-# 若构建openclash 则添加内核
+# 为 OpenClash 添加内核文件
 if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
-    echo "✅ 已选择 luci-app-openclash，添加 openclash core"
+    echo "✅ 已选择 luci-app-openclash，添加 OpenClash 内核和配置文件"
+    
+    # 创建 OpenClash 目录
     mkdir -p files/etc/openclash/core
-    # Download clash_meta
+    mkdir -p files/etc/openclash/config
+    
+    # 下载 clash_meta 内核 (推荐使用 meta 内核)
+    echo "正在下载 Clash Meta 内核..."
     META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-v1.tar.gz"
-    wget -qO- $META_URL | tar xOvz > files/etc/openclash/core/clash_meta
-    chmod +x files/etc/openclash/core/clash_meta
-    # Download GeoIP and GeoSite
-    wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
-    wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
-    # Download latest openclash Client
-    URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases/latest \
-      | grep "browser_download_url.*ipk" \
-      | head -n1 \
-      | cut -d '"' -f 4)
-    echo "OpenClash latest ipk: $URL"
-    wget "$URL" -P /home/build/immortalwrt/packages/
+    if wget -q --show-progress $META_URL -O - | tar xOvz > files/etc/openclash/core/clash_meta; then
+        chmod +x files/etc/openclash/core/clash_meta
+        echo "✅ Clash Meta 内核下载完成"
+    else
+        echo "⚠️ Clash Meta 内核下载失败"
+    fi
+    
+    # 下载 GeoIP 和 GeoSite 数据库
+    echo "正在下载 GeoIP 和 GeoSite 数据库..."
+    wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
+    wget -q --show-progress https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
+    
+    echo "✅ OpenClash 文件添加完成"
 else
     echo "⚪️ 未选择 luci-app-openclash"
 fi
 
-if echo "$PACKAGES" | grep -q "luci-app-ssr-plus"; then
-    echo "✅ 已选择 luci-app-ssr-plus，添加 mihomo core"
-    mkdir -p files/usr/bin
-    # Download mihomo
-    MIHOMO_URL="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-linux-amd64-compatible-v1.19.24.gz"
-    mkdir -p files/usr/bin
-    wget -qO- "$MIHOMO_URL" | gzip -dc > files/usr/bin/mihomo
-    chmod +x files/usr/bin/mihomo
-    echo "✅ 已下载 mihomo core"
-    ls -lah files/usr/bin
-else
-    echo "⚪️ 未选择 luci-app-ssr-plus"
+# 为 ZeroTier 创建配置目录
+if echo "$PACKAGES" | grep -q "luci-app-zerotier"; then
+    echo "✅ 已选择 luci-app-zerotier，创建配置目录"
+    mkdir -p files/etc/zerotier
+    echo "✅ ZeroTier 配置目录创建完成"
 fi
 
-# SmartDNS 配置优化
-if echo "$PACKAGES" | grep -q "luci-app-smartdns"; then
-    echo "✅ 已选择 luci-app-smartdns，创建默认配置"
-    mkdir -p /home/build/immortalwrt/files/etc/config
-    # 可选：创建 SmartDNS 配置文件
-    cat << 'SMARTDNS_EOF' > /home/build/immortalwrt/files/etc/config/smartdns
-config smartdns
-    option enabled '1'
-    option server_name 'SmartDNS'
-    option port '6053'
-    option tcp_server '1'
-    option ipv6_server '1'
-    option dualstack_ipv6 '1'
-    option prefetch_domain '1'
-    option serve_expired '1'
-    option cache_size '1024'
-    option cache_persist '1'
-    option log_level 'info'
-    option log_file '/var/log/smartdns.log'
-    option audit_enable '0'
-    option redirect '1'  # 自动重定向 DNS 到 SmartDNS
+# 添加固定IP设置
+CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null)
 
-config domain
-    option name 'services.googleapis.cn'
-    option ip '203.208.40.66'
+if [ -n "$CUSTOM_ROUTER_IP" ]; then
+    echo "🔄 正在设置路由器管理地址为: $CUSTOM_ROUTER_IP"
+    
+    cat << EOF > /home/build/immortalwrt/files/etc/config/network
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
 
-config domain
-    option name 'ssl.gstatic.com'
-    option ip '203.208.40.66'
-SMARTDNS_EOF
-    echo "✅ SmartDNS 默认配置已创建"
+config globals 'globals'
+        option ula_prefix 'fd00:ab68:d9f0::/48'
+
+config device
+        option name 'br-lan'
+        option type 'bridge'
+        list ports 'eth0'
+
+config interface 'lan'
+        option device 'br-lan'
+        option proto 'static'
+        option ipaddr '$CUSTOM_ROUTER_IP'
+        option netmask '255.255.255.0'
+        option ip6assign '60'
+
+config interface 'wan'
+        option device 'eth1'
+        option proto 'dhcp'
+
+config interface 'wan6'
+        option device 'eth1'
+        option proto 'dhcpv6'
+EOF
+
+    echo "✅ 已设置路由器管理地址为: $CUSTOM_ROUTER_IP"
+else
+    echo "⚠️ 未找到自定义IP配置，使用默认配置"
 fi
 
 # 构建镜像
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
 echo "$PACKAGES"
+echo "=========================================="
+echo "包含的主要插件:"
+# echo "- SmartDNS (智能DNS加速)"
+echo "- MOSDNS (DNS 分流 + v2dat + GeoIP/GeoSite)"
+echo "- OpenClash (代理客户端 + 内核)"
+echo "- ZeroTier (虚拟组网)"
+echo "- DDNS-GO (动态域名解析)"
+echo "- Docker (如果启用: $INCLUDE_DOCKER)"
+echo "- Kucat 主题 (已预装并设为默认)"
+echo "=========================================="
 
-# 显示已安装的 Kucat 包
-echo "📦 Kucat 主题包列表:"
-ls -lh /home/build/immortalwrt/packages/kucat/ 2>/dev/null || echo "无本地 Kucat 包"
+# 测试软件包是否可用
+echo "测试软件包可用性..."
+for pkg in $PACKAGES; do
+    echo "检查包: $pkg"
+done
 
-make image PROFILE="generic" \
-  PACKAGES="$PACKAGES" \
-  FILES="/home/build/immortalwrt/files" \
-  ROOTFS_PARTSIZE=$PROFILE \
-  EXT4_IMGS=1 \
-  SQUASHFS_IMGS=1 \
-  TARGET_ROOTFS_EXT4FS=y \
-  TARGET_ROOTFS_SQUASHFS=y \
-  TARGET_IMAGES_GZIP=y
-
-if [ $? -ne 0 ]; then
+# 执行构建并捕获错误详情
+echo "开始执行 make image 命令..."
+if make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="/home/build/immortalwrt/files" ROOTFS_PARTSIZE=$PROFILE 2>&1 | tee /tmp/make_output.log; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
+else
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
+    echo "最后50行构建日志:"
+    tail -50 /tmp/make_output.log
     exit 1
 fi
-
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
