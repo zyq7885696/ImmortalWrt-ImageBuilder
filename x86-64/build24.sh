@@ -187,6 +187,52 @@ if [ -n "$CUSTOM_ROUTER_IP" ] && [ "$CUSTOM_ROUTER_IP" != "192.168.100.1" ]; the
     echo "✅ 自定义路由器IP已保存: $CUSTOM_ROUTER_IP"
 fi
 
+# ============= 添加 BBR 加速配置 ===============
+echo "🚀 正在配置 BBR 加速..."
+
+# 创建 BBR 配置脚本
+cat << 'BBR_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/98-bbr-enable
+#!/bin/sh
+# 启用 BBR 拥塞控制算法
+
+# 检查并启用 BBR
+if [ -f /proc/sys/net/ipv4/tcp_congestion_control ]; then
+    # 检查内核是否支持 BBR
+    if grep -q "bbr" /proc/sys/net/ipv4/tcp_available_congestion_control; then
+        # 设置 BBR 为默认拥塞控制算法
+        echo "bbr" > /proc/sys/net/ipv4/tcp_congestion_control
+        
+        # 永久保存配置
+        if ! grep -q "net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
+            echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+        else
+            sed -i 's/net.ipv4.tcp_congestion_control.*/net.ipv4.tcp_congestion_control = bbr/' /etc/sysctl.conf
+        fi
+        
+        # 优化 BBR 参数
+        if ! grep -q "net.core.default_qdisc" /etc/sysctl.conf; then
+            echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
+        else
+            sed -i 's/net.core.default_qdisc.*/net.core.default_qdisc = fq/' /etc/sysctl.conf
+        fi
+        
+        # 应用配置
+        sysctl -p > /dev/null 2>&1
+        
+        echo "✅ BBR 加速已启用" > /dev/console
+        echo "$(date): BBR acceleration enabled successfully" >> /tmp/bbr-setup.log
+    else
+        echo "⚠️ 内核不支持 BBR，跳过配置" > /dev/console
+        echo "$(date): BBR not supported by kernel" >> /tmp/bbr-setup.log
+    fi
+fi
+
+exit 0
+BBR_EOF
+
+chmod +x /home/build/immortalwrt/files/etc/uci-defaults/98-bbr-enable
+echo "✅ BBR 配置脚本已创建"
+
 # ============= 原有代码继续 =============
 
 if [ -z "$CUSTOM_PACKAGES" ]; then
