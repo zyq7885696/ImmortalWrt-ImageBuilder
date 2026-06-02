@@ -240,10 +240,12 @@ fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') - 开始构建固件..."
 
-# ============= Kucat 主题下载（无需修改） ===============
+# ============= Kucat 主题下载并添加到包仓库 ===============
 echo "🎨 正在下载 Kucat 主题 v3.3.0..."
 mkdir -p /home/build/immortalwrt/packages/kucat
+mkdir -p /home/build/immortalwrt/dl
 
+# 下载 Kucat 主题包
 wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-theme-kucat_3.3.0-r20260227_all.ipk \
     https://github.com/sirpdboy/luci-theme-kucat/releases/download/v3.3.0/luci-theme-kucat_3.3.0-r20260227_all.ipk
 
@@ -252,6 +254,20 @@ wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-app-k
 
 wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-i18n-kucat-config-zh-cn_0_all.ipk \
     https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-i18n-kucat-config-zh-cn_0_all.ipk
+
+# 创建本地包仓库目录
+mkdir -p /home/build/immortalwrt/bin/packages/x86_64/kucat
+cp /home/build/immortalwrt/packages/kucat/*.ipk /home/build/immortalwrt/bin/packages/x86_64/kucat/
+
+# 生成包索引
+cd /home/build/immortalwrt/bin/packages/x86_64
+./../../../../scripts/ipkg-make-index.sh ./kucat > ./kucat/Packages
+gzip -9c ./kucat/Packages > ./kucat/Packages.gz
+
+# 添加本地仓库配置
+cat >> /home/build/immortalwrt/repositories.conf << EOF
+src/gz kucat file:///home/build/immortalwrt/bin/packages/x86_64/kucat
+EOF
 
 cat << 'THEME_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 #!/bin/sh
@@ -277,12 +293,11 @@ PACKAGES="$PACKAGES luci-app-zerotier"
 PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
 PACKAGES="$PACKAGES luci-app-openclash"
 
+# 检查并添加 Kucat 包（使用 --force-depends 强制安装）
 if ls /home/build/immortalwrt/packages/kucat/luci-theme-kucat*.ipk 1> /dev/null 2>&1; then
-    mkdir -p /home/build/immortalwrt/extra-packages-local
-    cp /home/build/immortalwrt/packages/kucat/*.ipk /home/build/immortalwrt/extra-packages-local/
-    PACKAGES="$PACKAGES luci-theme-kucat"
-    PACKAGES="$PACKAGES luci-app-kucat-config"
-    PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn"
+    PACKAGES="$PACKAGES luci-theme-kucat --force-depends"
+    PACKAGES="$PACKAGES luci-app-kucat-config --force-depends"
+    PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn --force-depends"
 fi
 
 PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
@@ -305,22 +320,28 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
       | head -n1 \
       | cut -d '"' -f 4)
     wget "$URL" -P /home/build/immortalwrt/packages/
+    
+    # 添加本地 OpenClash 包到仓库
+    if [ -f /home/build/immortalwrt/packages/luci-app-openclash_*.ipk ]; then
+        cp /home/build/immortalwrt/packages/luci-app-openclash_*.ipk /home/build/immortalwrt/bin/packages/x86_64/kucat/
+    fi
 fi
 
 # 构建镜像
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image..."
 echo "$PACKAGES"
 
-# 修改为仅生成 squashfs 镜像，禁用 ext4
+# 使用本地包仓库
 make image PROFILE="generic" \
   PACKAGES="$PACKAGES" \
   FILES="/home/build/immortalwrt/files" \
   ROOTFS_PARTSIZE=$PROFILE \
-  EXT4_IMGS=1 \
+  EXT4_IMGS=0 \
   SQUASHFS_IMGS=1 \
-  TARGET_ROOTFS_EXT4FS=y \
+  TARGET_ROOTFS_EXT4FS=n \
   TARGET_ROOTFS_SQUASHFS=y \
-  TARGET_IMAGES_GZIP=y
+  TARGET_IMAGES_GZIP=y \
+  LOCAL_REPOSITORY="/home/build/immortalwrt/bin/packages/x86_64"
 
 if [ $? -ne 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
