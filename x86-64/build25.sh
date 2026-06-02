@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build script for ImmortalWrt 25.12.x
-# 25.12 使用 APK 包管理器，内核默认支持 BBR
+# 25.12 使用 APK 包管理器
 
 source shell/custom-packages.sh
 source shell/switch_repository.sh
@@ -53,69 +53,129 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') - 开始构建固件..."
 # ============= Kucat 主题下载并添加到本地仓库 ===============
 echo "🎨 正在下载 Kucat 主题 v3.3.0..."
 
-# 创建包目录
-mkdir -p /home/build/immortalwrt/packages/kucat
-mkdir -p /home/build/immortalwrt/bin/packages/x86_64/kucat
+# 创建临时目录用于构建本地源
+KUCAT_DIR="/home/build/immortalwrt/kucat-packages"
+mkdir -p "$KUCAT_DIR"
+mkdir -p "/home/build/immortalwrt/files/etc/uci-defaults"
 
-# 下载主题包
-wget --no-check-certificate -q -O /home/build/immortalwrt/packages/kucat/luci-theme-kucat_3.3.0-r20260227_all.ipk \
+# 下载主题包到临时目录
+cd "$KUCAT_DIR"
+
+# 下载并验证文件
+echo "下载 luci-theme-kucat..."
+wget --no-check-certificate -q --show-progress -O luci-theme-kucat.ipk \
     https://github.com/sirpdboy/luci-theme-kucat/releases/download/v3.3.0/luci-theme-kucat_3.3.0-r20260227_all.ipk
 
-wget --no-check-certificate -q -O /home/build/immortalwrt/packages/kucat/luci-app-kucat-config_2.2.0-r20260227_all.ipk \
+if [ ! -f luci-theme-kucat.ipk ] || [ ! -s luci-theme-kucat.ipk ]; then
+    echo "❌ 下载 luci-theme-kucat 失败"
+    KUCAT_AVAILABLE=false
+else
+    echo "✅ luci-theme-kucat 下载成功"
+    KUCAT_AVAILABLE=true
+fi
+
+echo "下载 luci-app-kucat-config..."
+wget --no-check-certificate -q --show-progress -O luci-app-kucat-config.ipk \
     https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-app-kucat-config_2.2.0-r20260227_all.ipk
 
-wget --no-check-certificate -q -O /home/build/immortalwrt/packages/kucat/luci-i18n-kucat-config-zh-cn_0_all.ipk \
+if [ ! -f luci-app-kucat-config.ipk ] || [ ! -s luci-app-kucat-config.ipk ]; then
+    echo "❌ 下载 luci-app-kucat-config 失败"
+    KUCAT_AVAILABLE=false
+fi
+
+echo "下载 luci-i18n-kucat-config-zh-cn..."
+wget --no-check-certificate -q --show-progress -O luci-i18n-kucat-config-zh-cn.ipk \
     https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-i18n-kucat-config-zh-cn_0_all.ipk
 
-# 复制到本地仓库
-cp /home/build/immortalwrt/packages/kucat/*.ipk /home/build/immortalwrt/bin/packages/x86_64/kucat/ 2>/dev/null
-
-# 生成包索引 (用于 opkg/APK)
-cd /home/build/immortalwrt/bin/packages/x86_64
-if [ -f "../../../../scripts/ipkg-make-index.sh" ]; then
-    ./../../../../scripts/ipkg-make-index.sh ./kucat > ./kucat/Packages 2>/dev/null
-    gzip -9c ./kucat/Packages > ./kucat/Packages.gz 2>/dev/null
+if [ ! -f luci-i18n-kucat-config-zh-cn.ipk ] || [ ! -s luci-i18n-kucat-config-zh-cn.ipk ]; then
+    echo "❌ 下载 luci-i18n-kucat-config-zh-cn 失败"
+    KUCAT_AVAILABLE=false
 fi
 
-# 创建 APK 仓库索引 (25.12 使用 APK)
-if command -v apk &> /dev/null; then
-    cd ./kucat
-    apk index -o APKINDEX.tar.gz *.ipk 2>/dev/null || true
-    cd ..
-fi
-
-# 添加本地仓库源
-cat >> /home/build/immortalwrt/repositories.conf << 'REPO_EOF'
-src/gz kucat file:///home/build/immortalwrt/bin/packages/x86_64/kucat
-REPO_EOF
-
-# 设置默认主题脚本
-cat << 'THEME_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
+if [ "$KUCAT_AVAILABLE" = true ]; then
+    # 创建本地仓库目录结构
+    LOCAL_REPO="/home/build/immortalwrt/bin/packages/x86_64/kucat"
+    mkdir -p "$LOCAL_REPO"
+    
+    # 复制包到仓库
+    cp -f "$KUCAT_DIR"/*.ipk "$LOCAL_REPO/"
+    
+    # 生成 APK 索引 (ImmortalWrt 25.12 使用 APK)
+    cd "$LOCAL_REPO"
+    
+    # 创建 APKINDEX
+    echo "生成 APK 仓库索引..."
+    apk index -o APKINDEX.tar.gz *.ipk 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo "✅ APK 索引生成成功"
+        # 创建签名文件（空文件，用于跳过签名验证）
+        touch APKINDEX.tar.gz.asc
+    else
+        echo "⚠️ APK 索引生成失败，尝试使用传统方法"
+        # 备用方案：使用 ipkg-make-index.sh
+        if [ -f "../../../../scripts/ipkg-make-index.sh" ]; then
+            ../../../../scripts/ipkg-make-index.sh . > Packages 2>/dev/null
+            gzip -9c Packages > Packages.gz 2>/dev/null
+            echo "✅ 传统索引生成成功"
+        fi
+    fi
+    
+    # 添加本地仓库源
+    mkdir -p /home/build/immortalwrt/files/etc/apk
+    cat << 'APK_REPO' > /home/build/immortalwrt/files/etc/apk/repositories.local
+/src/kucat file:///usr/local/kucat-packages
+APK_REPO
+    
+    # 创建安装脚本（在固件首次启动时安装）
+    cat << 'INSTALL_SCRIPT' > /home/build/immortalwrt/files/etc/uci-defaults/98-install-kucat
 #!/bin/sh
-uci set luci.main.mediaurlbase='/luci-static/kucat'
-uci commit luci
+# 安装 Kucat 主题包
+mkdir -p /usr/local/kucat-packages
+cp -f /etc/kucat-packages/*.ipk /usr/local/kucat-packages/ 2>/dev/null
+cd /usr/local/kucat-packages
+apk add --allow-untrusted *.ipk 2>/dev/null || opkg install *.ipk 2>/dev/null
 exit 0
-THEME_EOF
-chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
-echo "✅ Kucat 主题配置完成"
+INSTALL_SCRIPT
+    
+    # 准备包文件到 files 目录
+    mkdir -p /home/build/immortalwrt/files/etc/kucat-packages
+    cp -f "$LOCAL_REPO"/*.ipk /home/build/immortalwrt/files/etc/kucat-packages/
+    
+    chmod +x /home/build/immortalwrt/files/etc/uci-defaults/98-install-kucat
+    
+    # 设置默认主题脚本
+    cat << 'THEME_SCRIPT' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
+#!/bin/sh
+# 等待主题安装完成
+sleep 2
+if [ -d "/usr/lib/lua/luci/view/kucat" ] || [ -f "/usr/lib/lua/luci/view/theme/kucat" ]; then
+    uci set luci.main.mediaurlbase='/luci-static/kucat'
+    uci commit luci
+    echo "✅ Kucat 主题已激活"
+fi
+exit 0
+THEME_SCRIPT
+    chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
+    
+    echo "✅ Kucat 主题配置完成"
+    
+    # 列出已准备的包
+    echo "📦 Kucat 包列表:"
+    ls -lh "$LOCAL_REPO/"
+else
+    echo "⚠️ Kucat 主题下载失败，将跳过主题集成"
+fi
 
-# 验证包是否存在
-echo "📦 Kucat 包列表:"
-ls -la /home/build/immortalwrt/bin/packages/x86_64/kucat/ || echo "⚠️ 包目录为空"
-ls -la /home/build/immortalwrt/packages/kucat/ || echo "⚠️ 下载目录为空"
+# 清理临时目录
+rm -rf "$KUCAT_DIR"
 
 # ============= 软件包列表 ===============
-# 注意：Kucat 包通过本地仓库安装，不需要在 PACKAGES 中特别指定
 PACKAGES="curl luci-i18n-diskman-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-ttyd-zh-cn openssh-sftp-server luci-i18n-filemanager-zh-cn luci-app-ddns-go luci-i18n-ddns-go-zh-cn luci-app-zerotier luci-i18n-zerotier-zh-cn luci-app-openclash"
 
-# 添加 Kucat 主题到包列表（如果包文件存在）
-if ls /home/build/immortalwrt/bin/packages/x86_64/kucat/*.ipk 1>/dev/null 2>&1; then
-    PACKAGES="$PACKAGES luci-theme-kucat"
-    PACKAGES="$PACKAGES luci-app-kucat-config"
-    PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn"
-    echo "✅ Kucat 包已添加到构建列表"
-else
-    echo "⚠️ Kucat 包文件不存在，跳过添加"
+# 只有在 Kucat 包可用时才添加到列表
+if [ "$KUCAT_AVAILABLE" = true ]; then
+    # 注意：包会在首次启动时通过 uci-defaults 脚本安装
+    echo "✅ Kucat 主题将在首次启动时安装"
 fi
 
 PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
@@ -133,21 +193,16 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
     chmod +x files/etc/openclash/core/clash_meta
     wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
     wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
-    URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases/latest \
-      | grep "browser_download_url.*ipk" \
-      | head -n1 \
-      | cut -d '"' -f 4)
-    [ -n "$URL" ] && wget -q "$URL" -P /home/build/immortalwrt/packages/
 fi
 
 # ============= 更新 feeds 并构建 =============
 cd /home/build/immortalwrt
 
-# 更新 feeds (25.12 使用 APK)
+# 更新 feeds
 ./scripts/feeds update -a > /dev/null 2>&1
 ./scripts/feeds install -a > /dev/null 2>&1
 
-# 添加本地包路径到 .config
+# 添加基本配置到 .config
 cat >> .config << 'CONFIG_EOF'
 CONFIG_IMAGEOPT=y
 CONFIG_VERSIONOPT=y
@@ -167,43 +222,24 @@ CONFIG_PACKAGE_luci-app-ddns-go=y
 CONFIG_PACKAGE_luci-app-diskman=y
 CONFIG_PACKAGE_luci-app-filemanager=y
 CONFIG_PACKAGE_luci-app-ttyd=y
-CONFIG_PACKAGE_luci-theme-kucat=y
-CONFIG_PACKAGE_luci-app-kucat-config=y
-CONFIG_PACKAGE_luci-i18n-kucat-config-zh-cn=y
 CONFIG_EOF
 
-# 构建固件 - 仅 squashfs
+# 构建固件
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image..."
 echo "包含的软件包: $PACKAGES"
 
-# 使用 make image 并指定本地仓库
+# 使用 make image
 make image PROFILE="generic" \
     PACKAGES="$PACKAGES" \
     FILES="/home/build/immortalwrt/files" \
     ROOTFS_PARTSIZE="$PROFILE" \
     EXT4_IMGS=0 \
-    SQUASHFS_IMGS=1 \
-    LOCAL_REPOSITORY="/home/build/immortalwrt/bin/packages/x86_64"
+    SQUASHFS_IMGS=1
 
 if [ $? -ne 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
-    echo "尝试不包含 Kucat 主题重新构建..."
-    
-    # 如果没有 Kucat 包，移除它们再试
-    PACKAGES_NO_KUCAT=$(echo "$PACKAGES" | sed 's/luci-theme-kucat//g' | sed 's/luci-app-kucat-config//g' | sed 's/luci-i18n-kucat-config-zh-cn//g')
-    echo "重试，软件包: $PACKAGES_NO_KUCAT"
-    
-    make image PROFILE="generic" \
-        PACKAGES="$PACKAGES_NO_KUCAT" \
-        FILES="/home/build/immortalwrt/files" \
-        ROOTFS_PARTSIZE="$PROFILE" \
-        EXT4_IMGS=0 \
-        SQUASHFS_IMGS=1
-    
-    if [ $? -ne 0 ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed again!"
-        exit 1
-    fi
+    echo "检查错误日志..."
+    exit 1
 fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully!"
@@ -212,8 +248,12 @@ echo "✅ ImmortalWrt 25.12 固件已生成"
 echo "✅ 仅 squashfs 格式"
 echo "✅ IPv6 已禁用 (运行时配置)"
 echo "✅ DHCPv4 已禁用 (运行时配置)"
-echo "✅ BBR 加速已启用 (内核原生支持)"
 echo "✅ 包管理器: APK"
+if [ "$KUCAT_AVAILABLE" = true ]; then
+    echo "✅ Kucat 主题已集成 (首次启动时安装)"
+else
+    echo "⚠️ Kucat 主题未集成 (下载失败)"
+fi
 echo "=========================================="
 
 # 显示固件位置
