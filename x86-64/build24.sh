@@ -18,7 +18,6 @@ if [ -f "/home/build/immortalwrt/.config" ]; then
     sed -i 's/.*CONFIG_DEFAULT_BBR.*/CONFIG_DEFAULT_BBR=y/' /home/build/immortalwrt/.config 2>/dev/null
     sed -i 's/.*CONFIG_NET_SCH_FQ.*/CONFIG_NET_SCH_FQ=y/' /home/build/immortalwrt/.config 2>/dev/null
     
-    # 如果不存在则添加
     grep -q "CONFIG_TCP_CONG_BBR" /home/build/immortalwrt/.config || echo "CONFIG_TCP_CONG_BBR=y" >> /home/build/immortalwrt/.config
     grep -q "CONFIG_DEFAULT_BBR" /home/build/immortalwrt/.config || echo "CONFIG_DEFAULT_BBR=y" >> /home/build/immortalwrt/.config
     grep -q "CONFIG_NET_SCH_FQ" /home/build/immortalwrt/.config || echo "CONFIG_NET_SCH_FQ=y" >> /home/build/immortalwrt/.config
@@ -71,6 +70,8 @@ fi
 
 # ============= 禁用 IPv6 ===============
 echo "$(date): Disabling IPv6" >> $LOG_FILE
+
+# 修改系统配置禁用 IPv6
 uci set network.globals='globals'
 uci set network.globals.ula_prefix=''
 uci commit network
@@ -176,7 +177,7 @@ if [ -f /proc/sys/net/ipv4/tcp_congestion_control ]; then
         echo "✅ BBR 加速已启用" > /dev/console
         echo "$(date): BBR enabled successfully" >> /tmp/bbr-setup.log
     else
-        echo "⚠️ 内核不支持 BBR，请确保编译时启用了 CONFIG_TCP_CONG_BBR" > /dev/console
+        echo "⚠️ 内核不支持 BBR" > /dev/console
     fi
 fi
 exit 0
@@ -221,27 +222,13 @@ chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 echo "✅ Kucat 主题配置完成"
 
 # ============= 软件包列表 ===============
-PACKAGES=""
-PACKAGES="$PACKAGES curl"
-PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
-PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
-PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
-PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
-PACKAGES="$PACKAGES openssh-sftp-server"
-PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
-PACKAGES="$PACKAGES luci-app-ddns-go"
-PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"
-PACKAGES="$PACKAGES luci-app-zerotier"
-PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"
-PACKAGES="$PACKAGES luci-app-openclash"
+PACKAGES="curl luci-i18n-diskman-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-ttyd-zh-cn openssh-sftp-server luci-i18n-filemanager-zh-cn luci-app-ddns-go luci-i18n-ddns-go-zh-cn luci-app-zerotier luci-i18n-zerotier-zh-cn luci-app-openclash"
 
 # 添加 Kucat 主题
 if ls /home/build/immortalwrt/packages/kucat/luci-theme-kucat*.ipk 1>/dev/null 2>&1; then
     mkdir -p /home/build/immortalwrt/extra-packages-local
     cp /home/build/immortalwrt/packages/kucat/*.ipk /home/build/immortalwrt/extra-packages-local/
-    PACKAGES="$PACKAGES luci-theme-kucat"
-    PACKAGES="$PACKAGES luci-app-kucat-config"
-    PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn"
+    PACKAGES="$PACKAGES luci-theme-kucat luci-app-kucat-config luci-i18n-kucat-config-zh-cn"
 fi
 
 PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
@@ -266,7 +253,7 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
     wget -q "$URL" -P /home/build/immortalwrt/packages/
 fi
 
-# ============= 构建固件 (ImmortalWrt 24.10) =============
+# ============= 构建固件 (使用 make image) =============
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image..."
 echo "包含的软件包: $PACKAGES"
 
@@ -276,66 +263,20 @@ cd /home/build/immortalwrt
 ./scripts/feeds update -a > /dev/null 2>&1
 ./scripts/feeds install -a > /dev/null 2>&1
 
-# 配置构建选项
-cat >> .config << 'CONFIG_EOF'
-
-# Target System
-CONFIG_TARGET_x86=y
-CONFIG_TARGET_x86_64=y
-CONFIG_TARGET_x86_64_GENERIC=y
-
-# RootFS - 仅 squashfs
-CONFIG_TARGET_ROOTFS_SQUASHFS=y
-CONFIG_TARGET_ROOTFS_EXT4FS=n
-CONFIG_TARGET_IMAGES_GZIP=y
-
-# BBR Support
-CONFIG_TCP_CONG_BBR=y
-CONFIG_DEFAULT_BBR=y
-CONFIG_NET_SCH_FQ=y
-
-# Additional packages
-CONFIG_PACKAGE_curl=y
-CONFIG_PACKAGE_openssh-sftp-server=y
-CONFIG_PACKAGE_luci-app-openclash=y
-CONFIG_PACKAGE_luci-app-zerotier=y
-CONFIG_PACKAGE_luci-app-ddns-go=y
-CONFIG_PACKAGE_luci-app-diskman=y
-CONFIG_PACKAGE_luci-app-filemanager=y
-CONFIG_PACKAGE_luci-app-ttyd=y
-CONFIG_PACKAGE_luci-i18n-diskman-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-filemanager-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
-CONFIG_PACKAGE_luci-i18n-zerotier-zh-cn=y
-CONFIG_PACKAGE_luci-theme-kucat=y
-CONFIG_PACKAGE_luci-app-kucat-config=y
-CONFIG_PACKAGE_luci-i18n-kucat-config-zh-cn=y
-CONFIG_EOF
-
-# 添加 Docker 支持
-if [ "$INCLUDE_DOCKER" = "yes" ]; then
-    echo "CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y" >> .config
-    echo "CONFIG_PACKAGE_docker=y" >> .config
-    echo "CONFIG_PACKAGE_dockerd=y" >> .config
-fi
-
-# 下载所有选定的包
-make download -j8 2>&1 | grep -v "WARNING"
-
-# 构建固件 (使用单线程以便查看错误)
-make -j$(nproc) 2>&1
+# 使用 make image 命令构建
+make image PROFILE="generic" \
+    PACKAGES="$PACKAGES" \
+    FILES="/home/build/immortalwrt/files" \
+    ROOTFS_PARTSIZE="$PROFILE" \
+    EXT4_IMGS=0 \
+    SQUASHFS_IMGS=1
 
 if [ $? -ne 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
-    echo "尝试单线程构建以查看详细错误..."
-    make -j1 V=s
     exit 1
 fi
 
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully!"
 echo "=========================================="
 echo "✅ 固件已生成 (仅 squashfs 格式)"
 echo "✅ IPv6 已禁用"
@@ -343,11 +284,27 @@ echo "✅ DHCPv4 已禁用"
 echo "✅ BBR 支持已配置"
 echo "=========================================="
 
-# 显示固件信息
-if [ -d "/home/build/immortalwrt/bin/targets/x86/64" ]; then
-    echo "📦 固件位置: /home/build/immortalwrt/bin/targets/x86/64/"
-    ls -lh /home/build/immortalwrt/bin/targets/x86/64/*.gz 2>/dev/null || ls -lh /home/build/immortalwrt/bin/targets/x86/64/
-else
-    echo "📦 固件位置: /home/build/immortalwrt/bin/targets/"
-    find /home/build/immortalwrt/bin/targets -name "*.gz" -ls 2>/dev/null
-fi
+# 查找并显示固件文件
+echo "📦 查找生成的固件文件..."
+
+# 可能的输出目录
+OUTPUT_DIRS="/home/build/immortalwrt/bin/targets/x86/64 /home/build/immortalwrt/bin/targets /home/build/immortalwrt/bin"
+
+for dir in $OUTPUT_DIRS; do
+    if [ -d "$dir" ]; then
+        echo "检查目录: $dir"
+        find "$dir" -type f \( -name "*.img" -o -name "*.gz" -o -name "*.vmdk" -o -name "*.qcow2" -o -name "*.combined" \) 2>/dev/null | while read file; do
+            echo "📄 $file"
+            ls -lh "$file"
+        done
+    fi
+done
+
+# 如果上面的查找没找到，尝试更广泛的查找
+echo ""
+echo "完整搜索 bin 目录:"
+find /home/build/immortalwrt/bin -type f -size +1M 2>/dev/null | head -20 | while read file; do
+    echo "  - $file"
+done
+
+exit 0
