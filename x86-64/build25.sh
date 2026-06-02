@@ -58,6 +58,29 @@ if [ -z "$CUSTOM_IP" ]; then
     echo "$(date): Using default router IP: $CUSTOM_IP" >> $LOG_FILE
 fi
 
+# ============= 禁用 IPv6 配置 ===============
+echo "$(date): Disabling IPv6 globally" >> $LOG_FILE
+
+# 修改系统配置禁用 IPv6
+uci set network.globals='globals'
+uci set network.globals.ula_prefix=''  # 清空 ULA 前缀
+uci commit network
+
+# 系统级禁用 IPv6
+cat >> /etc/sysctl.conf << EOF
+net.ipv6.conf.all.disable_ipv6=1
+net.ipv6.conf.default.disable_ipv6=1
+net.ipv6.conf.lo.disable_ipv6=1
+EOF
+
+sysctl -p > /dev/null 2>&1
+
+# 禁用 IPv6 内核模块
+cat > /etc/modules.d/disable-ipv6 << EOF
+blacklist ipv6
+blacklist sit
+EOF
+
 # 检测网卡数量（25.12 使用 DSA 架构）
 NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -E '^(eth|lan|wan)[0-9]*$' | grep -v 'lo' | wc -l)
 echo "$(date): Detected $NIC_COUNT network interface(s)" >> $LOG_FILE
@@ -75,7 +98,11 @@ if [ "$NIC_COUNT" -eq 1 ]; then
     uci set network.lan.ipaddr="$CUSTOM_IP"
     uci set network.lan.netmask='255.255.255.0'
     
-    echo "$(date): Single NIC configured with static IP: $CUSTOM_IP on $NIC_NAME" >> $LOG_FILE
+    # ============= 禁用 LAN 口的 DHCP 服务器 ===============
+    uci set dhcp.lan.ignore='1'  # 禁用 DHCP
+    uci set dhcp.lan.dynamicdhcp='0'  # 禁用动态 DHCP
+    
+    echo "$(date): Single NIC configured with static IP: $CUSTOM_IP on $NIC_NAME (DHCP disabled)" >> $LOG_FILE
     
 else
     echo "$(date): Multiple NICs detected ($NIC_COUNT), using standard configuration" >> $LOG_FILE
@@ -92,6 +119,10 @@ else
         LAN_DEV=$(ls /sys/class/net/ | grep -E '^lan' | head -1)
     fi
     
+    # ============= 禁用 LAN 口的 DHCP 服务器 ===============
+    uci set dhcp.lan.ignore='1'  # 禁用 DHCP
+    uci set dhcp.lan.dynamicdhcp='0'  # 禁用动态 DHCP
+    
     if [ "$enable_pppoe" = "yes" ]; then
         echo "$(date): Configuring PPPoE on $WAN_DEV" >> $LOG_FILE
         
@@ -106,32 +137,45 @@ else
         uci set network.wan.username="$pppoe_account"
         uci set network.wan.password="$pppoe_password"
         
-        # 配置 IPv6
-        ucidef_set_interface_wan6 "$WAN_DEV"
-        uci set network.wan6.proto='dhcpv6'
+        # 禁用 WAN 口 IPv6
+        uci set network.wan.ipv6='0'
         
-        echo "$(date): PPPoE configured on $WAN_DEV" >> $LOG_FILE
+        echo "$(date): PPPoE configured on $WAN_DEV (IPv6 disabled)" >> $LOG_FILE
     else
         echo "$(date): Using DHCP on WAN" >> $LOG_FILE
         
         ucidef_set_interfaces_lan_wan "$LAN_DEV" "$WAN_DEV"
         uci set network.lan.ipaddr="$CUSTOM_IP"
         uci set network.lan.netmask='255.255.255.0'
+        
+        # 禁用 WAN 口 IPv6
+        uci set network.wan.ipv6='0'
     fi
+fi
+
+# 完全禁用 dnsmasq 的 DHCP 功能
+uci set dhcp.@dnsmasq[0].dhcp='0'
+
+# 停止并禁用 odhcpd（IPv6 DHCP 服务器）
+if [ -f /etc/init.d/odhcpd ]; then
+    /etc/init.d/odhcpd disable
+    /etc/init.d/odhcpd stop
 fi
 
 # 提交配置
 uci commit network
+uci commit dhcp
 
-# 重启网络服务（25.12 使用 service 命令）
+# 重启网络服务
 service network restart
+service dnsmasq restart 2>/dev/null
 
-echo "$(date): Network configuration completed for ImmortalWrt 25.12" >> $LOG_FILE
+echo "$(date): Network configuration completed - IPv6: DISABLED, DHCPv4: DISABLED" >> $LOG_FILE
 exit 0
 NETWORK_EOF
 
 chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-fix-network
-echo "✅ 网络自动配置脚本已创建 (ImmortalWrt 25.12 兼容)"
+echo "✅ 网络自动配置脚本已创建 (IPv6 和 DHCP 已禁用)"
 
 # 保存自定义路由器IP到文件
 if [ -n "$CUSTOM_ROUTER_IP" ] && [ "$CUSTOM_ROUTER_IP" != "192.168.100.1" ]; then
@@ -267,6 +311,7 @@ fi
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image..."
 echo "$PACKAGES"
 
+# 修改为仅生成 squashfs 镜像，禁用 ext4
 make image PROFILE="generic" \
   PACKAGES="$PACKAGES" \
   FILES="/home/build/immortalwrt/files" \
@@ -283,3 +328,6 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
+echo "✅ 固件已生成 (仅 squashfs 格式)"
+echo "✅ IPv6 已禁用"
+echo "✅ DHCPv4 已禁用"
