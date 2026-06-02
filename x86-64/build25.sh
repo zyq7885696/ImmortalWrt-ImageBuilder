@@ -229,7 +229,7 @@ for ipk in *.ipk; do
     fi
 done
 
-# 创建默认主题配置文件
+# 创建默认主题配置文件（Kucat 设为默认）
 mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
 cat << 'EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 #!/bin/sh
@@ -240,7 +240,7 @@ exit 0
 EOF
 chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 
-echo "✅ kucat 主题配置完成"
+echo "✅ Kucat 主题已设为默认"
 
 cd /home/build/immortalwrt
 
@@ -267,15 +267,13 @@ fi
 echo "$(date '+%Y-%m-%d %H:%M:%S') - 开始构建固件..."
 
 # ============= imm仓库内的插件==============
-# 定义所需安装的包列表 下列插件你都可以自行删减
+# 定义所需安装的包列表（已移除 argon 和 smartdns）
 PACKAGES=""
 PACKAGES="$PACKAGES curl"
 PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
-PACKAGES="$PACKAGES luci-theme-argon"
-PACKAGES="$PACKAGES luci-app-argon-config"
-PACKAGES="$PACKAGES luci-i18n-argon-config-zh-cn"
-#25.12
+# PACKAGES="$PACKAGES luci-theme-argon"  # 已移除 Argon 主题
+# PACKAGES="$PACKAGES luci-app-argon-config"  # 已移除 Argon 配置
 PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
 PACKAGES="$PACKAGES openssh-sftp-server"
@@ -289,8 +287,31 @@ PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"  # DDNS-GO 中文语言包
 PACKAGES="$PACKAGES luci-app-zerotier"  # ZeroTier
 PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"  # ZeroTier 中文语言包
 PACKAGES="$PACKAGES luci-app-openclash"  # OpenClash
-# PACKAGES="$PACKAGES luci-app-smartdns"  # SmartDNS
-# PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"  # SmartDNS 中文语言包
+# PACKAGES="$PACKAGES luci-app-smartdns"  # 已移除 SmartDNS
+# PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"  # 已移除 SmartDNS 中文语言包
+
+# ============= BBR 加速配置 =============
+echo "🚀 正在配置 BBR 加速..."
+mkdir -p /home/build/immortalwrt/files/etc/sysctl.d
+cat << 'BBR_EOF' > /home/build/immortalwrt/files/etc/sysctl.d/99-bbr.conf
+# BBR 加速配置
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+BBR_EOF
+
+# 同时创建 uci-defaults 脚本确保 BBR 在启动时启用
+mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
+cat << 'BBR_UCI_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-bbr-enable
+#!/bin/sh
+# 启用 BBR 加速
+if [ -f /etc/sysctl.d/99-bbr.conf ]; then
+    sysctl -p /etc/sysctl.d/99-bbr.conf 2>/dev/null
+    echo "BBR acceleration enabled" > /tmp/bbr-status.log
+fi
+exit 0
+BBR_UCI_EOF
+chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-bbr-enable
+echo "✅ BBR 加速配置已添加"
 
 # Kucat 主题已手动解压到 files 目录，不需要添加到包列表
 # 验证文件是否已正确解压
@@ -347,46 +368,13 @@ else
     echo "⚪️ 未选择 luci-app-ssr-plus"
 fi
 
-# SmartDNS 配置优化
-if echo "$PACKAGES" | grep -q "luci-app-smartdns"; then
-    echo "✅ 已选择 luci-app-smartdns，创建默认配置"
-    mkdir -p /home/build/immortalwrt/files/etc/config
-    # 创建 SmartDNS 配置文件
-    cat << 'SMARTDNS_EOF' > /home/build/immortalwrt/files/etc/config/smartdns
-config smartdns
-    option enabled '1'
-    option server_name 'SmartDNS'
-    option port '6053'
-    option tcp_server '1'
-    option ipv6_server '1'
-    option dualstack_ipv6 '1'
-    option prefetch_domain '1'
-    option serve_expired '1'
-    option cache_size '2048'
-    option cache_persist '1'
-    option log_level 'info'
-    option log_file '/var/log/smartdns.log'
-    option audit_enable '0'
-    option redirect '1'
-
-config domain
-    option name 'services.googleapis.cn'
-    option ip '203.208.40.66'
-
-config domain
-    option name 'ssl.gstatic.com'
-    option ip '203.208.40.66'
-SMARTDNS_EOF
-    echo "✅ SmartDNS 默认配置已创建"
-fi
-
 # 构建镜像
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
 echo "$PACKAGES"
 echo "=========================================="
 echo "包含的主要插件:"
 echo "- Kucat 主题 (已预装并设为默认)"
-# echo "- SmartDNS (智能DNS加速)"
+echo "- BBR 加速 (已启用)"
 echo "- OpenClash (代理客户端 + 内核)"
 echo "- ZeroTier (虚拟组网)"
 echo "- DDNS-GO (动态域名解析)"
