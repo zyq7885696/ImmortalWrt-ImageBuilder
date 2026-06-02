@@ -1,58 +1,17 @@
 #!/bin/bash
-# Build script for ImmortalWrt 24.10.x
 # Log file for debugging
-
 source shell/custom-packages.sh
 source shell/switch_repository.sh
-
 echo "第三方软件包: $CUSTOM_PACKAGES"
 LOGFILE="/tmp/uci-defaults-log.txt"
-echo "Starting build.sh at $(date)" >> $LOGFILE
+echo "Starting 99-custom.sh at $(date)" >> $LOGFILE
 echo "编译固件大小为: $PROFILE MB"
 echo "Include Docker: $INCLUDE_DOCKER"
 
-cd /home/build/immortalwrt
-
-# ============= 强制启用内核 BBR 支持 (在构建前) ===============
-echo "🚀 正在配置内核以支持 BBR..."
-
-# 读取自定义路由器IP
-CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null || echo "192.168.100.1")
-echo "路由器管理地址: $CUSTOM_ROUTER_IP"
-
-# 方法1: 直接修改 .config
-cat >> .config << 'BBR_CONFIG'
-# BBR Congestion Control
-CONFIG_TCP_CONG_BBR=y
-CONFIG_DEFAULT_BBR=y
-CONFIG_NET_SCH_FQ=y
-CONFIG_DEFAULT_NET_SCH="fq"
-CONFIG_TCP_CONG_CUBIC=y
-CONFIG_TCP_CONG_RENO=y
-CONFIG_DEFAULT_TCP_CONG="bbr"
-BBR_CONFIG
-
-# 方法2: 修改内核配置文件
-KERNEL_VERSION="6.6"
-KERNEL_CONFIG="target/linux/x86/config-${KERNEL_VERSION}"
-
-if [ -f "$KERNEL_CONFIG" ]; then
-    grep -q "CONFIG_TCP_CONG_BBR=y" "$KERNEL_CONFIG" || echo "CONFIG_TCP_CONG_BBR=y" >> "$KERNEL_CONFIG"
-    grep -q "CONFIG_NET_SCH_FQ=y" "$KERNEL_CONFIG" || echo "CONFIG_NET_SCH_FQ=y" >> "$KERNEL_CONFIG"
-    echo "✅ 内核配置文件已更新: $KERNEL_CONFIG"
-fi
-
-# 重新生成配置
-make defconfig > /dev/null 2>&1
-
-# 验证 BBR 配置
-echo "验证内核配置:"
-grep -E "CONFIG_TCP_CONG_BBR|CONFIG_DEFAULT_BBR|CONFIG_NET_SCH_FQ" .config || echo "⚠️ BBR 配置验证中"
-
-# ============= 创建 pppoe-settings 配置文件 =============
 echo "Create pppoe-settings"
 mkdir -p /home/build/immortalwrt/files/etc/config
 
+# 创建pppoe配置文件 yml传入环境变量ENABLE_PPPOE等 写入配置文件 供99-custom.sh读取
 cat << EOF > /home/build/immortalwrt/files/etc/config/pppoe-settings
 enable_pppoe=${ENABLE_PPPOE}
 pppoe_account=${PPPOE_ACCOUNT}
@@ -62,19 +21,24 @@ EOF
 echo "cat pppoe-settings"
 cat /home/build/immortalwrt/files/etc/config/pppoe-settings
 
-# ============= 创建网络配置脚本 (增强版) ===============
-echo "🔧 创建网络自动配置脚本"
+# ============= 创建单网卡自动配置脚本 ===============
+echo "🔧 创建网络自动配置脚本（支持单网卡自动固定IP）"
 mkdir -p /home/build/immortalwrt/files/etc/uci-defaults
+
+# 读取用户设置的路由器管理地址
+CUSTOM_ROUTER_IP=$(cat /home/build/immortalwrt/files/etc/config/custom_router_ip.txt 2>/dev/null || echo "192.168.100.1")
+echo "路由器管理地址: $CUSTOM_ROUTER_IP"
 
 cat << 'NETWORK_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-fix-network
 #!/bin/sh
 
+# 日志文件
 LOG_FILE="/tmp/network-auto-config.log"
 echo "$(date): Starting network auto-config script" >> $LOG_FILE
 
 # 读取PPPoE配置
 if [ -f /etc/config/pppoe-settings ]; then
-    . /etc/config/pppoe-settings
+    source /etc/config/pppoe-settings
     echo "$(date): Loaded PPPoE settings - ENABLE_PPPOE=$enable_pppoe" >> $LOG_FILE
 fi
 
@@ -82,280 +46,359 @@ fi
 CUSTOM_IP=""
 if [ -f /etc/config/custom_router_ip.txt ]; then
     CUSTOM_IP=$(cat /etc/config/custom_router_ip.txt)
+    echo "$(date): Loaded custom router IP: $CUSTOM_IP" >> $LOG_FILE
 fi
 
+# 如果没读取到，使用默认值
 if [ -z "$CUSTOM_IP" ]; then
     CUSTOM_IP="192.168.100.1"
+    echo "$(date): Using default router IP: $CUSTOM_IP" >> $LOG_FILE
 fi
-
-echo "$(date): Using router IP: $CUSTOM_IP" >> $LOG_FILE
-
-# ============= 禁用 IPv6 ===============
-echo "$(date): Disabling IPv6" >> $LOG_FILE
-
-# 修改系统配置禁用 IPv6
-uci set network.globals='globals'
-uci set network.globals.ula_prefix=''
-uci commit network
-
-cat >> /etc/sysctl.conf << EOF
-net.ipv6.conf.all.disable_ipv6=1
-net.ipv6.conf.default.disable_ipv6=1
-net.ipv6.conf.lo.disable_ipv6=1
-EOF
-sysctl -p > /dev/null 2>&1
-
-# 禁用 IPv6 内核模块
-cat > /etc/modules.d/disable-ipv6 << EOF
-blacklist ipv6
-blacklist sit
-EOF
 
 # 检测网卡数量
 NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -E '^eth[0-9]+$' | wc -l)
-[ "$NIC_COUNT" -eq 0 ] && NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -v 'lo' | wc -l)
-echo "$(date): Detected $NIC_COUNT NIC(s)" >> $LOG_FILE
+echo "$(date): Detected $NIC_COUNT network interface(s)" >> $LOG_FILE
 
-# ============= 网络配置 =============
-if [ "$NIC_COUNT" -eq 1 ]; then
-    # 单网卡处理
-    NIC_NAME=$(ls /sys/class/net/ | grep -E '^eth[0-9]+' | head -1)
-    [ -z "$NIC_NAME" ] && NIC_NAME=$(ls /sys/class/net/ | grep -v 'lo' | head -1)
-    
-    uci set network.lan=interface
-    uci set network.lan.device="$NIC_NAME"
-    uci set network.lan.proto='static'
-    uci set network.lan.ipaddr="$CUSTOM_IP"
-    uci set network.lan.netmask='255.255.255.0'
-    
-    # 禁用 WAN
-    uci set network.wan=interface
-    uci set network.wan.proto='none'
-    
-    echo "$(date): Single NIC configured with IP: $CUSTOM_IP on $NIC_NAME" >> $LOG_FILE
-else
-    # 多网卡处理
-    if [ "$enable_pppoe" = "yes" ]; then
-        uci set network.wan=interface
-        uci set network.wan.device='eth0'
-        uci set network.wan.proto='pppoe'
-        uci set network.wan.username="$pppoe_account"
-        uci set network.wan.password="$pppoe_password"
-        uci set network.wan.ipv6='0'
-        echo "$(date): PPPoE configured on eth0" >> $LOG_FILE
-    else
-        uci set network.wan=interface
-        uci set network.wan.device='eth0'
-        uci set network.wan.proto='dhcp'
-        uci set network.wan.ipv6='0'
-    fi
-    
-    uci set network.lan=interface
-    uci set network.lan.device='eth1'
-    uci set network.lan.proto='static'
-    uci set network.lan.ipaddr="$CUSTOM_IP"
-    uci set network.lan.netmask='255.255.255.0'
-    
-    echo "$(date): Multiple NICs configured, LAN IP: $CUSTOM_IP" >> $LOG_FILE
+# 如果有网络接口但数量为0，尝试其他命名方式
+if [ "$NIC_COUNT" -eq 0 ]; then
+    NIC_COUNT=$(ls /sys/class/net/ 2>/dev/null | grep -v 'lo' | wc -l)
+    echo "$(date): Alternative detection found $NIC_COUNT interface(s)" >> $LOG_FILE
 fi
 
-# ============= 禁用 DHCP ===============
-uci set dhcp.lan=dhcp
-uci set dhcp.lan.ignore='1'
-uci set dhcp.lan.dynamicdhcp='0'
+# 单网卡处理
+if [ "$NIC_COUNT" -eq 1 ]; then
+    echo "$(date): Single NIC detected, configuring static IP" >> $LOG_FILE
+    
+    # 获取网卡名称
+    NIC_NAME=$(ls /sys/class/net/ 2>/dev/null | grep -E '^eth[0-9]+$' | head -1)
+    if [ -z "$NIC_NAME" ]; then
+        NIC_NAME=$(ls /sys/class/net/ 2>/dev/null | grep -v 'lo' | head -1)
+    fi
+    
+    echo "$(date): Using network interface: $NIC_NAME" >> $LOG_FILE
+    
+    # 备份原始配置
+    if [ -f /etc/config/network ]; then
+        cp /etc/config/network /etc/config/network.backup
+    fi
+    
+    # 配置单网卡为LAN口，使用静态IP
+    cat > /etc/config/network << EOF
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
 
-# 禁用 odhcpd (IPv6 DHCP)
-if [ -f /etc/init.d/odhcpd ]; then
-    /etc/init.d/odhcpd disable
-    /etc/init.d/odhcpd stop
+config interface 'lan'
+        option device '$NIC_NAME'
+        option proto 'static'
+        option ipaddr '$CUSTOM_IP'
+        option netmask '255.255.255.0'
+        option ip6assign '60'
+EOF
+    
+    # 如果启用了PPPoE，单网卡模式下PPPoE可能不适用，给出警告
+    if [ "$enable_pppoe" = "yes" ]; then
+        echo "$(date): WARNING: PPPoE is enabled but single NIC detected. PPPoE may not work properly." >> $LOG_FILE
+    fi
+    
+    echo "$(date): Single NIC configured with static IP: $CUSTOM_IP" >> $LOG_FILE
+    
+else
+    echo "$(date): Multiple NICs detected ($NIC_COUNT), using standard configuration" >> $LOG_FILE
+    
+    # 多网卡情况，保持标准配置
+    if [ "$enable_pppoe" = "yes" ]; then
+        echo "$(date): Configuring PPPoE on WAN interface" >> $LOG_FILE
+        
+        cat > /etc/config/network << EOF
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config interface 'wan'
+        option device 'eth0'
+        option proto 'pppoe'
+        option username '$pppoe_account'
+        option password '$pppoe_password'
+        option ipv6 'auto'
+
+config interface 'wan6'
+        option device 'eth0'
+        option proto 'dhcpv6'
+
+config interface 'lan'
+        option device 'eth1'
+        option proto 'static'
+        option ipaddr '$CUSTOM_IP'
+        option netmask '255.255.255.0'
+        option ip6assign '60'
+EOF
+        echo "$(date): PPPoE configured on eth0" >> $LOG_FILE
+    else
+        echo "$(date): Using standard DHCP configuration on WAN" >> $LOG_FILE
+        
+        cat > /etc/config/network << EOF
+config interface 'loopback'
+        option device 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config interface 'wan'
+        option device 'eth0'
+        option proto 'dhcp'
+
+config interface 'wan6'
+        option device 'eth0'
+        option proto 'dhcpv6'
+
+config interface 'lan'
+        option device 'eth1'
+        option proto 'static'
+        option ipaddr '$CUSTOM_IP'
+        option netmask '255.255.255.0'
+        option ip6assign '60'
+EOF
+    fi
+    
+    echo "$(date): Multiple NIC configuration completed" >> $LOG_FILE
 fi
 
 # 提交配置
 uci commit network
-uci commit dhcp
 
-# 重启服务
+# 重启网络服务
 /etc/init.d/network restart
-/etc/init.d/dnsmasq restart 2>/dev/null
 
-echo "$(date): Network config completed (IPv6: DISABLED, DHCP: DISABLED)" >> $LOG_FILE
+echo "$(date): Network configuration completed" >> $LOG_FILE
 exit 0
 NETWORK_EOF
 
 chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-fix-network
-echo "✅ 网络配置脚本已创建 (IPv6 和 DHCP 已禁用)"
+echo "✅ 网络自动配置脚本已创建"
 
-# 保存自定义路由器IP到文件（如果从 workflow 传入）
+# 保存自定义路由器IP到文件
 if [ -n "$CUSTOM_ROUTER_IP" ] && [ "$CUSTOM_ROUTER_IP" != "192.168.100.1" ]; then
     echo "$CUSTOM_ROUTER_IP" > /home/build/immortalwrt/files/etc/config/custom_router_ip.txt
     echo "✅ 自定义路由器IP已保存: $CUSTOM_ROUTER_IP"
 fi
 
-# ============= BBR 运行时配置脚本 ===============
-echo "🚀 正在配置 BBR 运行时脚本..."
+# ============= 原有代码继续 =============
 
-cat << 'BBR_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/98-bbr-enable
-#!/bin/sh
-# 启用 BBR 拥塞控制算法
+if [ -z "$CUSTOM_PACKAGES" ]; then
+  echo "⚪️ 未选择 任何第三方软件包"
+else
+  # ============= 同步第三方插件库==============
+  # 同步第三方软件仓库run/ipk
+  echo "🔄 正在同步第三方软件仓库 Cloning run file repo..."
+  git clone --depth=1 https://github.com/wukongdaily/store.git /tmp/store-run-repo
 
-sleep 3
+  # 拷贝 run/x86 下所有 run 文件和ipk文件 到 extra-packages 目录
+  mkdir -p /home/build/immortalwrt/extra-packages
+  cp -r /tmp/store-run-repo/run/x86/* /home/build/immortalwrt/extra-packages/
 
-# 等待网络初始化
-for i in 1 2 3 4 5; do
-    if [ -f /proc/sys/net/ipv4/tcp_available_congestion_control ]; then
-        break
-    fi
-    sleep 1
-done
-
-if [ -f /proc/sys/net/ipv4/tcp_congestion_control ]; then
-    AVAILABLE=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
-    echo "$(date): Available congestion controls: $AVAILABLE" >> /tmp/bbr-setup.log
-    
-    if echo "$AVAILABLE" | grep -q "bbr"; then
-        echo "bbr" > /proc/sys/net/ipv4/tcp_congestion_control
-        echo "fq" > /proc/sys/net/core/default_qdisc 2>/dev/null
-        
-        # 持久化配置
-        sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
-        sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
-        echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
-        echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
-        
-        sysctl -p > /dev/null 2>&1
-        
-        CURRENT=$(cat /proc/sys/net/ipv4/tcp_congestion_control)
-        echo "$(date): BBR enabled, current: $CURRENT" >> /tmp/bbr-setup.log
-        echo "✅ BBR 加速已启用 (当前算法: $CURRENT)" > /dev/console
-    else
-        echo "$(date): BBR not available. Available: $AVAILABLE" >> /tmp/bbr-setup.log
-        echo "⚠️ BBR 不可用，可用的算法: $AVAILABLE" > /dev/console
-    fi
-fi
-exit 0
-BBR_EOF
-
-chmod +x /home/build/immortalwrt/files/etc/uci-defaults/98-bbr-enable
-echo "✅ BBR 运行时脚本已创建"
-
-# ============= 第三方包处理 =============
-if [ -n "$CUSTOM_PACKAGES" ]; then
-    echo "🔄 同步第三方软件仓库..."
-    git clone --depth=1 https://github.com/wukongdaily/store.git /tmp/store-run-repo
-    mkdir -p /home/build/immortalwrt/extra-packages
-    cp -r /tmp/store-run-repo/run/x86/* /home/build/immortalwrt/extra-packages/
-    echo "✅ Run files copied"
-    sh shell/prepare-packages.sh
+  echo "✅ Run files copied to extra-packages:"
+  ls -lh /home/build/immortalwrt/extra-packages/*.run
+  # 解压并拷贝ipk到packages目录
+  sh shell/prepare-packages.sh
+  ls -lah /home/build/immortalwrt/packages/
 fi
 
+# 输出调试信息
 echo "$(date '+%Y-%m-%d %H:%M:%S') - 开始构建固件..."
 
-# ============= Kucat 主题下载 ===============
+# ============= 下载指定版本的 Kucat 主题 ===============
 echo "🎨 正在下载 Kucat 主题 v3.3.0..."
+
+# 创建 Kucat 包目录
 mkdir -p /home/build/immortalwrt/packages/kucat
 
-wget --no-check-certificate -q -O /home/build/immortalwrt/packages/kucat/luci-theme-kucat_3.3.0-r20260227_all.ipk \
+# 下载主题包
+echo "正在下载 luci-theme-kucat..."
+wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-theme-kucat_3.3.0-r20260227_all.ipk \
     https://github.com/sirpdboy/luci-theme-kucat/releases/download/v3.3.0/luci-theme-kucat_3.3.0-r20260227_all.ipk
 
-wget --no-check-certificate -q -O /home/build/immortalwrt/packages/kucat/luci-app-kucat-config_2.2.0-r20260227_all.ipk \
+if [ $? -eq 0 ] && [ -f /home/build/immortalwrt/packages/kucat/luci-theme-kucat_3.3.0-r20260227_all.ipk ]; then
+    echo "✅ 主题包下载成功"
+else
+    echo "❌ 主题包下载失败"
+fi
+
+# 下载配置应用
+echo "正在下载 luci-app-kucat-config..."
+wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-app-kucat-config_2.2.0-r20260227_all.ipk \
     https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-app-kucat-config_2.2.0-r20260227_all.ipk
 
-wget --no-check-certificate -q -O /home/build/immortalwrt/packages/kucat/luci-i18n-kucat-config-zh-cn_0_all.ipk \
+if [ $? -eq 0 ] && [ -f /home/build/immortalwrt/packages/kucat/luci-app-kucat-config_2.2.0-r20260227_all.ipk ]; then
+    echo "✅ 配置应用下载成功"
+else
+    echo "❌ 配置应用下载失败"
+fi
+
+# 下载语言包
+echo "正在下载 luci-i18n-kucat-config-zh-cn..."
+wget --no-check-certificate -O /home/build/immortalwrt/packages/kucat/luci-i18n-kucat-config-zh-cn_0_all.ipk \
     https://github.com/sirpdboy/luci-app-kucat-config/releases/download/v2.2.0/luci-i18n-kucat-config-zh-cn_0_all.ipk
 
-# 设置默认主题
+if [ $? -eq 0 ] && [ -f /home/build/immortalwrt/packages/kucat/luci-i18n-kucat-config-zh-cn_0_all.ipk ]; then
+    echo "✅ 语言包下载成功"
+else
+    echo "❌ 语言包下载失败"
+fi
+
+# 记录下载的包文件
+ls -lh /home/build/immortalwrt/packages/kucat/ > /home/build/immortalwrt/packages/kucat/kucat_packages.txt
+
+# 设置默认主题为 Kucat
 cat << 'THEME_EOF' > /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
 #!/bin/sh
+# 设置 Kucat 为默认主题
 uci set luci.main.mediaurlbase='/luci-static/kucat'
 uci commit luci
 exit 0
 THEME_EOF
 chmod +x /home/build/immortalwrt/files/etc/uci-defaults/99-kucat-theme
-echo "✅ Kucat 主题配置完成"
 
-# ============= 软件包列表 ===============
-PACKAGES="curl luci-i18n-diskman-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-ttyd-zh-cn openssh-sftp-server luci-i18n-filemanager-zh-cn luci-app-ddns-go luci-i18n-ddns-go-zh-cn luci-app-zerotier luci-i18n-zerotier-zh-cn luci-app-openclash"
+echo "✅ Kucat 主题安装完成并设置为默认主题"
+ls -lh /home/build/immortalwrt/packages/kucat/
 
-# 添加 Kucat 主题
-if ls /home/build/immortalwrt/packages/kucat/*.ipk 1>/dev/null 2>&1; then
+# ============= imm仓库内的插件==============
+# 定义所需安装的包列表
+PACKAGES=""
+PACKAGES="$PACKAGES curl"
+PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn"
+PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
+PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
+PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
+PACKAGES="$PACKAGES openssh-sftp-server"
+
+# 文件管理器
+PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
+
+# 新增插件
+PACKAGES="$PACKAGES luci-app-ddns-go"  # DDNS-GO
+PACKAGES="$PACKAGES luci-i18n-ddns-go-zh-cn"  # DDNS-GO 中文语言包
+PACKAGES="$PACKAGES luci-app-zerotier"  # ZeroTier
+PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn"  # ZeroTier 中文语言包
+PACKAGES="$PACKAGES luci-app-openclash"  # OpenClash
+# PACKAGES="$PACKAGES luci-app-smartdns"  # SmartDNS
+# PACKAGES="$PACKAGES luci-i18n-smartdns-zh-cn"  # SmartDNS 中文语言包
+
+# 添加本地 Kucat 主题包路径
+if ls /home/build/immortalwrt/packages/kucat/luci-theme-kucat*.ipk 1> /dev/null 2>&1; then
+    # 将本地包路径添加到构建系统
     mkdir -p /home/build/immortalwrt/extra-packages-local
     cp /home/build/immortalwrt/packages/kucat/*.ipk /home/build/immortalwrt/extra-packages-local/
-    PACKAGES="$PACKAGES luci-theme-kucat luci-app-kucat-config luci-i18n-kucat-config-zh-cn"
+    # 使用本地包
+    PACKAGES="$PACKAGES luci-theme-kucat"
+    PACKAGES="$PACKAGES luci-app-kucat-config"
+    PACKAGES="$PACKAGES luci-i18n-kucat-config-zh-cn"
 fi
 
+# ======== shell/custom-packages.sh =======
+# 合并imm仓库以外的第三方插件
 PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
 
+# 判断是否需要编译 Docker 插件
 if [ "$INCLUDE_DOCKER" = "yes" ]; then
     PACKAGES="$PACKAGES luci-i18n-dockerman-zh-cn"
-    echo "✅ 添加 Docker 支持"
+    echo "Adding package: luci-i18n-dockerman-zh-cn"
 fi
 
-# OpenClash 内核下载
+# 若构建openclash 则添加内核
 if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
-    echo "✅ 添加 OpenClash 内核"
+    echo "✅ 已选择 luci-app-openclash，添加 openclash core"
     mkdir -p files/etc/openclash/core
-    wget -qO- https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-v1.tar.gz | tar xOvz > files/etc/openclash/core/clash_meta
+    # Download clash_meta
+    META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-v1.tar.gz"
+    wget -qO- $META_URL | tar xOvz > files/etc/openclash/core/clash_meta
     chmod +x files/etc/openclash/core/clash_meta
+    # Download GeoIP and GeoSite
     wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -O files/etc/openclash/GeoIP.dat
     wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat -O files/etc/openclash/GeoSite.dat
+    # Download latest openclash Client
     URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases/latest \
       | grep "browser_download_url.*ipk" \
       | head -n1 \
       | cut -d '"' -f 4)
-    [ -n "$URL" ] && wget -q "$URL" -P /home/build/immortalwrt/packages/
+    echo "OpenClash latest ipk: $URL"
+    wget "$URL" -P /home/build/immortalwrt/packages/
+else
+    echo "⚪️ 未选择 luci-app-openclash"
 fi
 
-# ============= 重新配置并构建 =============
-cd /home/build/immortalwrt
+if echo "$PACKAGES" | grep -q "luci-app-ssr-plus"; then
+    echo "✅ 已选择 luci-app-ssr-plus，添加 mihomo core"
+    mkdir -p files/usr/bin
+    # Download mihomo
+    MIHOMO_URL="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-linux-amd64-compatible-v1.19.24.gz"
+    mkdir -p files/usr/bin
+    wget -qO- "$MIHOMO_URL" | gzip -dc > files/usr/bin/mihomo
+    chmod +x files/usr/bin/mihomo
+    echo "✅ 已下载 mihomo core"
+    ls -lah files/usr/bin
+else
+    echo "⚪️ 未选择 luci-app-ssr-plus"
+fi
 
-# 更新 feeds
-./scripts/feeds update -a > /dev/null 2>&1
-./scripts/feeds install -a > /dev/null 2>&1
+# SmartDNS 配置优化
+if echo "$PACKAGES" | grep -q "luci-app-smartdns"; then
+    echo "✅ 已选择 luci-app-smartdns，创建默认配置"
+    mkdir -p /home/build/immortalwrt/files/etc/config
+    # 可选：创建 SmartDNS 配置文件
+    cat << 'SMARTDNS_EOF' > /home/build/immortalwrt/files/etc/config/smartdns
+config smartdns
+    option enabled '1'
+    option server_name 'SmartDNS'
+    option port '6053'
+    option tcp_server '1'
+    option ipv6_server '1'
+    option dualstack_ipv6 '1'
+    option prefetch_domain '1'
+    option serve_expired '1'
+    option cache_size '1024'
+    option cache_persist '1'
+    option log_level 'info'
+    option log_file '/var/log/smartdns.log'
+    option audit_enable '0'
+    option redirect '1'  # 自动重定向 DNS 到 SmartDNS
 
-# 确保 BBR 配置在 .config 中
-echo "确保 BBR 内核配置已启用..."
-echo "CONFIG_TCP_CONG_BBR=y" >> .config
-echo "CONFIG_DEFAULT_BBR=y" >> .config
-echo "CONFIG_NET_SCH_FQ=y" >> .config
-echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> .config
+config domain
+    option name 'services.googleapis.cn'
+    option ip '203.208.40.66'
 
-# 重新生成配置
-make defconfig > /dev/null 2>&1
+config domain
+    option name 'ssl.gstatic.com'
+    option ip '203.208.40.66'
+SMARTDNS_EOF
+    echo "✅ SmartDNS 默认配置已创建"
+fi
 
-# 验证 BBR 配置
-echo ""
-echo "========== 内核配置验证 =========="
-grep "CONFIG_TCP_CONG_BBR" .config || echo "⚠️ CONFIG_TCP_CONG_BBR 未设置"
-grep "CONFIG_DEFAULT_BBR" .config || echo "⚠️ CONFIG_DEFAULT_BBR 未设置"
-grep "CONFIG_NET_SCH_FQ" .config || echo "⚠️ CONFIG_NET_SCH_FQ 未设置"
-echo "=================================="
+# 构建镜像
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
+echo "$PACKAGES"
 
-# 构建固件
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image..."
-echo "包含的软件包: $PACKAGES"
+# 显示已安装的 Kucat 包
+echo "📦 Kucat 主题包列表:"
+ls -lh /home/build/immortalwrt/packages/kucat/ 2>/dev/null || echo "无本地 Kucat 包"
 
 make image PROFILE="generic" \
-    PACKAGES="$PACKAGES" \
-    FILES="/home/build/immortalwrt/files" \
-    ROOTFS_PARTSIZE="$PROFILE" \
-    EXT4_IMGS=0 \
-    SQUASHFS_IMGS=1
+  PACKAGES="$PACKAGES" \
+  FILES="/home/build/immortalwrt/files" \
+  ROOTFS_PARTSIZE=$PROFILE \
+  EXT4_IMGS=1 \
+  SQUASHFS_IMGS=1 \
+  TARGET_ROOTFS_EXT4FS=y \
+  TARGET_ROOTFS_SQUASHFS=y \
+  TARGET_IMAGES_GZIP=y
 
 if [ $? -ne 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') - Error: Build failed!"
     exit 1
 fi
 
-echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully!"
-echo "=========================================="
-echo "✅ 固件已生成 (仅 squashfs 格式)"
-echo "✅ IPv6 已禁用"
-echo "✅ DHCPv4 已禁用"
-echo "✅ BBR 支持已配置到内核"
-echo "=========================================="
-
-# 显示固件位置
-echo "📦 固件位置:"
-find /home/build/immortalwrt/bin -name "*.img" -o -name "*.gz" 2>/dev/null | head -10
-
-exit 0
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Build completed successfully."
