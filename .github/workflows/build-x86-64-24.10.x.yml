@@ -19,20 +19,20 @@ on:
       custom_router_ip:
         description: "请设置路由器的管理地址(仅对多网口路由器有效) 格式:192.168.x.1 或 10.x.x.1"
         required: true
-        default: "192.168.100.1"
+        default: "172.16.1.251"
       profile:
         description: '请输入要编译固件大小 单位(MB)'
         required: true
-        default: '1024'
+        default: '2048'
       enable_store:
         description: "集成 store 商店"
         required: false
         type: boolean
-        default: true
+        default: false
       include_docker:
         description: |
           是否编译 Docker 插件
-        required: true
+        required: false
         default: 'yes'
         type: choice
         options:
@@ -40,7 +40,7 @@ on:
           - 'no'
       enable_pppoe:
         description: "是否配置PPPoE拨号信息?"
-        required: true
+        required: false
         default: 'no'
         type: choice
         options:
@@ -142,6 +142,26 @@ jobs:
             echo "❎ 未启用 luci-app-store"
           fi
 
+      # ============= 新增：准备内核 BBR 配置 =============
+      - name: Prepare kernel BBR config
+        run: |
+          # 创建内核配置覆盖文件
+          mkdir -p files/etc/modules.d
+          cat > files/etc/modules.d/99-bbr << 'MODEOF'
+          tcp_bbr
+          sch_fq
+          MODEOF
+          
+          # 创建内核配置片段
+          cat > kernel-config-bbr << 'KERNELCONFIG'
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_DEFAULT_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_DEFAULT_TCP_CONG="bbr"
+          KERNELCONFIG
+          
+          echo "✅ BBR 内核配置已准备"
+
       - name: Build ImmortalWrt-x86-64-efi 24.10.x
         run: |
           profile="${{ github.event.inputs.profile }}"
@@ -156,6 +176,7 @@ jobs:
             -v "${{ github.workspace }}/x86-64/imm.config:/home/build/immortalwrt/.config" \
             -v "${{ github.workspace }}/shell:/home/build/immortalwrt/shell" \
             -v "${{ github.workspace }}/x86-64/build24.sh:/home/build/immortalwrt/build.sh" \
+            -v "${{ github.workspace }}/kernel-config-bbr:/home/build/immortalwrt/kernel-config-bbr" \
             -e PROFILE=$profile \
             -e INCLUDE_DOCKER=$include_docker \
             -e ENABLE_PPPOE=${{ inputs.enable_pppoe }} \
@@ -178,6 +199,7 @@ jobs:
           - 🔧 **网络配置**: 自动检测网卡数量并配置
             - 单网卡: 自动设置为固定IP (${{ github.event.inputs.custom_router_ip }})
             - 多网卡: LAN口使用指定IP，WAN口使用DHCP/PPPoE
+          - 🚀 **BBR加速**: 已启用
           EOF
 
           if [ "${{ github.event.inputs.include_docker }}" == "yes" ]; then
@@ -187,7 +209,6 @@ jobs:
             echo -e "\n#### 不带docker" >> ${{ github.workspace }}/router-info.md
           fi
           
-          # 添加镜像类型说明
           cat >> ${{ github.workspace }}/router-info.md <<EOF
           
           ## 📦 可用镜像类型
@@ -198,6 +219,9 @@ jobs:
           ## 🌐 网络说明
           - **单网卡设备**: 固件会自动检测并将唯一网卡设置为LAN口，使用固定IP: ${{ github.event.inputs.custom_router_ip }}
           - **多网卡设备**: eth0为WAN口，eth1为LAN口，LAN口IP为: ${{ github.event.inputs.custom_router_ip }}
+          
+          ## 🚀 BBR 加速
+          BBR 拥塞控制算法已在内核中启用，可提升网络性能。
           EOF
 
       - name: Upload ImmortWrt as release assets
