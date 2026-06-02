@@ -1,8 +1,24 @@
-name: build-x86-64-immortalwrt-24.10.x
+name: build-sunxi-cortexa53-24.10.x
 
 on:
   workflow_dispatch:
     inputs:
+      profile:
+        type: choice
+        description: "请选择开发板型号"
+        required: true
+        options:
+          - xunlong_orangepi-zero3
+          - friendlyarm_nanopi-r1s-h5
+          - xunlong_orangepi-zero2
+          - xunlong_orangepi-zero-plus
+          - friendlyarm_nanopi-neo2
+          - xunlong_orangepi-pc2
+          - friendlyarm_nanopi-neo-plus2
+          - libretech_all-h3-cc-h5
+          - pine64_pine64-plus
+          - pine64_sopine-baseboard
+        default: xunlong_orangepi-zero3
       luci_version:
         description: "选择luci版本"
         required: false
@@ -16,45 +32,28 @@ on:
           - 24.10.4
           - 24.10.5
           - 24.10.6
-      custom_router_ip:
-        description: "请设置路由器的管理地址(仅对多网口路由器有效) 格式:192.168.x.1 或 10.x.x.1"
-        required: true
-        default: "172.16.1.251"
-      profile:
-        description: '请输入要编译固件大小 单位(MB)'
-        required: true
-        default: '2048'
       enable_store:
         description: "集成 store 商店"
         required: false
         type: boolean
-        default: false
+        default: true
       include_docker:
         description: |
           是否编译 Docker 插件
-        required: false
-        default: 'yes'
+        required: true
+        default: 'no'
         type: choice
         options:
           - 'yes'
           - 'no'
-      enable_pppoe:
-        description: "是否配置PPPoE拨号信息?"
-        required: false
-        default: 'no'
-        type: choice
-        options:
-        - 'yes'
-        - 'no'
-      pppoe_account:
-        description: "宽带账号 (若启用PPPoE)"
-        required: false
-      pppoe_password:
-        description: "宽带密码 (若启用PPPoE)"
-        required: false
+      size:
+        description: '请输入要编译固件大小 单位(MB)'
+        required: true
+        default: '1024'
 
 permissions:
   contents: write
+
 
 jobs:
   build:
@@ -65,73 +64,8 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set executable permissions
-        run: chmod +x ${{ github.workspace }}/x86-64/build24.sh
-
-      - name: Create custom configuration directory
         run: |
-          mkdir -p "${{ github.workspace }}/custom"
-          mkdir -p "${{ github.workspace }}/files/etc/uci-defaults"
-          
-      - name: Save Custom Router IP into OpenWrt files
-        run: |
-          echo "${{ github.event.inputs.custom_router_ip }}" > "${{ github.workspace }}/custom/custom_router_ip.txt"
-          echo "您设置的路由器管理地址是:${{ github.event.inputs.custom_router_ip }}"
-          
-      - name: Create network auto-config script for single NIC
-        run: |
-          cat > "${{ github.workspace }}/files/etc/uci-defaults/99-fix-network" << 'EOF'
-          #!/bin/sh
-          
-          # 检测网卡数量
-          NIC_COUNT=$(ls /sys/class/net/ | grep -E '^eth[0-9]+$' | wc -l)
-          CUSTOM_IP="${{ github.event.inputs.custom_router_ip }}"
-          
-          if [ "$NIC_COUNT" -eq 1 ]; then
-              # 单网卡情况：自动设置固定IP
-              echo "检测到单网卡，自动设置固定IP: $CUSTOM_IP"
-              
-              # 获取网卡名称
-              NIC_NAME=$(ls /sys/class/net/ | grep -E '^eth[0-9]+$' | head -1)
-              
-              # 设置固定IP
-              uci set network.lan=interface
-              uci set network.lan.proto='static'
-              uci set network.lan.ipaddr="$CUSTOM_IP"
-              uci set network.lan.netmask='255.255.255.0'
-              uci set network.lan.device="$NIC_NAME"
-              
-              # 禁用DHCP客户端
-              uci set network.wan=interface
-              uci set network.wan.proto='none'
-              uci delete network.wan.device 2>/dev/null || true
-              
-              # 提交更改
-              uci commit network
-              
-              # 重启网络服务
-              /etc/init.d/network restart
-          else
-              echo "检测到多网卡($NIC_COUNT个)，使用默认配置或用户设置的管理地址"
-              # 多网卡情况：只设置LAN口IP（用户指定的管理地址）
-              if [ -n "$CUSTOM_IP" ] && [ "$CUSTOM_IP" != "192.168.1.1" ]; then
-                  uci set network.lan.ipaddr="$CUSTOM_IP"
-                  uci commit network
-              fi
-          fi
-          
-          exit 0
-          EOF
-          
-          chmod +x "${{ github.workspace }}/files/etc/uci-defaults/99-fix-network"
-          
-      - name: Validate PPPoE Inputs
-        run: |
-          if [[ "${{ inputs.enable_pppoe }}" == "yes" ]]; then
-            if [[ -z "${{ inputs.pppoe_account }}" || -z "${{ inputs.pppoe_password }}" ]]; then
-              echo "Error: PPPoE account and password must be provided when PPPoE is enabled!"
-              exit 1
-            fi
-          fi
+          chmod +x ${{ github.workspace }}/sunxi-cortexa53/build24.sh
       
       - name: Enable Store integration
         run: |
@@ -141,98 +75,50 @@ jobs:
           else
             echo "❎ 未启用 luci-app-store"
           fi
-
-      # ============= 新增：准备内核 BBR 配置 =============
-      - name: Prepare kernel BBR config
+      
+      - name: Build sunxi-cortexa53 ImmpotalWrt 24.10.x
         run: |
-          # 创建内核配置覆盖文件
-          mkdir -p files/etc/modules.d
-          cat > files/etc/modules.d/99-bbr << 'MODEOF'
-          tcp_bbr
-          sch_fq
-          MODEOF
-          
-          # 创建内核配置片段
-          cat > kernel-config-bbr << 'KERNELCONFIG'
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_DEFAULT_BBR=y
-          CONFIG_NET_SCH_FQ=y
-          CONFIG_DEFAULT_TCP_CONG="bbr"
-          KERNELCONFIG
-          
-          echo "✅ BBR 内核配置已准备"
-
-      - name: Build ImmortalWrt-x86-64-efi 24.10.x
-        run: |
-          profile="${{ github.event.inputs.profile }}"
+          profiles="${{ github.event.inputs.profile }}"
           include_docker="${{ github.event.inputs.include_docker }}"
+          size="${{ github.event.inputs.size }}"
           luci_version="${{ github.event.inputs.luci_version }}"
-          echo "Building for profile: $profile"
-          docker run --rm -i \
-            --user root \
-            -v "${{ github.workspace }}/bin:/home/build/immortalwrt/bin" \
-            -v "${{ github.workspace }}/files:/home/build/immortalwrt/files" \
-            -v "${{ github.workspace }}/custom:/home/build/immortalwrt/files/etc/config" \
-            -v "${{ github.workspace }}/x86-64/imm.config:/home/build/immortalwrt/.config" \
-            -v "${{ github.workspace }}/shell:/home/build/immortalwrt/shell" \
-            -v "${{ github.workspace }}/x86-64/build24.sh:/home/build/immortalwrt/build.sh" \
-            -v "${{ github.workspace }}/kernel-config-bbr:/home/build/immortalwrt/kernel-config-bbr" \
-            -e PROFILE=$profile \
-            -e INCLUDE_DOCKER=$include_docker \
-            -e ENABLE_PPPOE=${{ inputs.enable_pppoe }} \
-            -e PPPOE_ACCOUNT=${{ inputs.pppoe_account }} \
-            -e PPPOE_PASSWORD=${{ inputs.pppoe_password }} \
-          immortalwrt/imagebuilder:x86-64-openwrt-${luci_version} /bin/bash /home/build/immortalwrt/build.sh
           
+          IFS=',' read -r -a profile_array <<< "$profiles"
+          
+          for profile in "${profile_array[@]}"; do
+            echo "Building for profile: $profile"
+            
+            docker run --rm -i \
+              --user root \
+              -v "${{ github.workspace }}/bin:/home/build/immortalwrt/bin" \
+              -v "${{ github.workspace }}/files/etc/uci-defaults:/home/build/immortalwrt/files/etc/uci-defaults" \
+              -v "${{ github.workspace }}/arch/arch.conf:/home/build/immortalwrt/files/etc/opkg/arch.conf" \
+              -v "${{ github.workspace }}/shell:/home/build/immortalwrt/shell" \
+              -v "${{ github.workspace }}/sunxi-cortexa53/build24.sh:/home/build/immortalwrt/build.sh" \
+              -e PROFILE=$profile \
+              -e INCLUDE_DOCKER=$include_docker \
+              -e ROOTSIZE=$size \
+              immortalwrt/imagebuilder:sunxi-cortexa53-openwrt-${luci_version} /bin/bash /home/build/immortalwrt/build.sh
+          done
 
+     
       - name: Create info
         run: |
-          cat > ${{ github.workspace }}/router-info.md <<EOF
-          ## 📡 路由器后台信息
-          <a href="https://wkdaily.cpolar.cn/archives/1">
-           <img src="https://img.shields.io/badge/若下载慢可套用国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge"/>
-          </a>
-          
-          - 🏠 **后台地址**: ${{ github.event.inputs.custom_router_ip }}
-          - 👤 **用户名**: root
-          - 🔑 **密码**: 无
-          - 🔧 **网络配置**: 自动检测网卡数量并配置
-            - 单网卡: 自动设置为固定IP (${{ github.event.inputs.custom_router_ip }})
-            - 多网卡: LAN口使用指定IP，WAN口使用DHCP/PPPoE
-          - 🚀 **BBR加速**: 已启用
-          EOF
-
           if [ "${{ github.event.inputs.include_docker }}" == "yes" ]; then
-            extra_content="#### 默认带docker"
-            echo -e "\n$extra_content" >> ${{ github.workspace }}/router-info.md
+            extra_content="### 默认带docker"
+            echo -e "\n $extra_content" >> ${{ github.workspace }}/sunxi-cortexa53/info.md
           else
-            echo -e "\n#### 不带docker" >> ${{ github.workspace }}/router-info.md
+            echo -e "NO docker"
           fi
-          
-          cat >> ${{ github.workspace }}/router-info.md <<EOF
-          
-          ## 📦 可用镜像类型
-          - **SQUASHFS**: 可恢复出厂设置，支持配置重置
-          - **rootfs**: 适用于容器环境或自定义分区
-          - **combined-efi**: 适用于 UEFI 启动的 squashfs 镜像
-          
-          ## 🌐 网络说明
-          - **单网卡设备**: 固件会自动检测并将唯一网卡设置为LAN口，使用固定IP: ${{ github.event.inputs.custom_router_ip }}
-          - **多网卡设备**: eth0为WAN口，eth1为LAN口，LAN口IP为: ${{ github.event.inputs.custom_router_ip }}
-          
-          ## 🚀 BBR 加速
-          BBR 拥塞控制算法已在内核中启用，可提升网络性能。
-          EOF
 
       - name: Upload ImmortWrt as release assets
         uses: softprops/action-gh-release@v2.2.1
         with:
-          tag_name: Autobuild-x86-64
-          body_path: ${{ github.workspace }}/router-info.md
+          tag_name: Autobuild-sunxi-cortexa53
+          name: ImmortalWrt-sunxi-cortexa53
+          body_path: ${{ github.workspace }}/sunxi-cortexa53/info.md
           files: |
-            ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined-efi.img.gz
-            ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined.img.gz
-            ${{ github.workspace }}/bin/targets/x86/64/*rootfs.tar.gz
-            ${{ github.workspace }}/bin/targets/x86/64/*ext4-combined-efi.img.gz
-            ${{ github.workspace }}/bin/targets/x86/64/*ext4-combined.img.gz
+            ${{ github.workspace }}/bin/targets/sunxi/cortexa53/*squashfs-sdcard.img.gz
           token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
