@@ -58,15 +58,6 @@ PACKAGES="$PACKAGES openssh-sftp-server"
 # 文件管理器
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 
-# ========== 新增：链路聚合插件 ==========
-if [ "$INCLUDE_BONDING" = "yes" ]; then
-    PACKAGES="$PACKAGES kmod-bonding"
-    PACKAGES="$PACKAGES proto-bonding"
-    PACKAGES="$PACKAGES luci-proto-bonding"
-    echo "✅ Adding bonding packages: kmod-bonding, proto-bonding, luci-proto-bonding"
-fi
-# ======================================
-
 # 第三方软件包 合并
 # ======== shell/custom-packages.sh =======
 if [ "$PROFILE" = "glinet_gl-axt1800" ] || [ "$PROFILE" = "glinet_gl-ax1800" ]; then
@@ -84,37 +75,11 @@ if [ "$INCLUDE_DOCKER" = "yes" ]; then
     echo "Adding package: luci-i18n-dockerman-zh-cn"
 fi
 
-# ========== 新增：链路聚合配置文件生成 ==========
-if [ "$INCLUDE_BONDING" = "yes" ] && [ -n "$BONDING_SLAVES" ]; then
-    echo "📡 Configuring Link Aggregation..."
-    
-    # 设置默认值
-    BONDING_POLICY=${BONDING_POLICY:-"802.3ad"}
-    BONDING_XMIT_HASH=${BONDING_XMIT_HASH:-"layer2+3"}
-    BONDING_LACP_RATE=${BONDING_LACP_RATE:-"slow"}
-    BONDING_MIN_LINKS=${BONDING_MIN_LINKS:-"1"}
-    
-    # 生成 bonding 配置
-    cat << BONDING_EOF >> /home/build/immortalwrt/files/etc/config/network
-
-# ========== 链路聚合配置 ==========
-config interface 'bond_lan'
-    option proto 'bonding'
-    option bonding_policy '$BONDING_POLICY'
-    option slaves '$BONDING_SLAVES'
-    option xmit_hash_policy '$BONDING_XMIT_HASH'
-    option lacp_rate '$BONDING_LACP_RATE'
-    option min_links '$BONDING_MIN_LINKS'
-    option all_slaves_active '0'
-BONDING_EOF
-    
-    # 添加 bonding 模块自动加载
-    mkdir -p /home/build/immortalwrt/files/etc/modules.d
-    echo "bonding" >> /home/build/immortalwrt/files/etc/modules.d/10-bonding
-    
-    echo "✅ Bonding configured: $BONDING_POLICY on $BONDING_SLAVES"
+# 判断是否需要编译链路聚合插件
+if [ "$INCLUDE_BONDING" = "yes" ]; then
+    PACKAGES="$PACKAGES kmod-bonding proto-bonding luci-proto-bonding"
+    echo "Adding bonding packages: kmod-bonding, proto-bonding, luci-proto-bonding"
 fi
-# ==================================================
 
 # 若构建openclash 则添加内核
 if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
