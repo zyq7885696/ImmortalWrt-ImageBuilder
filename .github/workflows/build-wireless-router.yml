@@ -33,6 +33,8 @@ on:
           - glinet_gl-b2200
           - glinet_gl-x3000
           - glinet_gl-xe3000
+          # 京东云太乙ER1 IPQ6010
+          - jdcloud_taiyi-er1
           # 就是Fudy MT3000
           - huasifei_wh3000-emmc
           - cudy_tr3000-v1
@@ -485,15 +487,18 @@ on:
           - smartrg_sr400ac
           - tenda_ac9
         default: glinet_gl-mt6000
+      
       custom_router_ip:
         description: "请设置路由器的管理地址 格式:192.168.x.1 或 10.x.x.1"
         required: true
         default: "192.168.100.1"
+      
       enable_store:
         description: "集成 store 商店"
         required: false
         type: boolean
         default: false
+      
       include_docker:
         description: |
           是否编译 Docker 插件
@@ -503,6 +508,56 @@ on:
         options:
           - 'yes'
           - 'no'
+      
+      # ========== 新增：链路聚合配置 ==========
+      include_bonding:
+        description: "是否启用链路聚合 (与H3C S5130S-28S配合)"
+        required: true
+        default: 'no'
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+      
+      bonding_slaves:
+        description: "要聚合的网口名称 (例如: eth1 eth2 或 lan1 lan2)"
+        required: false
+        default: "eth1 eth2"
+      
+      bonding_policy:
+        description: "链路聚合模式 (802.3ad=LACP动态, balance-rr=静态轮询)"
+        required: false
+        default: '802.3ad'
+        type: choice
+        options:
+          - '802.3ad'
+          - 'balance-rr'
+      
+      bonding_xmit_hash:
+        description: "哈希策略 (仅802.3ad模式有效)"
+        required: false
+        default: 'layer2+3'
+        type: choice
+        options:
+          - 'layer2'
+          - 'layer2+3'
+          - 'layer3+4'
+      
+      bonding_lacp_rate:
+        description: "LACP协商速率"
+        required: false
+        default: 'slow'
+        type: choice
+        options:
+          - 'slow'
+          - 'fast'
+      
+      bonding_min_links:
+        description: "最少可用链路数"
+        required: false
+        default: '1'
+      # ======================================
+      
       enable_pppoe:
         description: "是否配置PPPoE拨号信息?"
         required: true
@@ -511,13 +566,14 @@ on:
         options:
           - 'yes'
           - 'no'
+      
       pppoe_account:
         description: "宽带账号 (若启用PPPoE)"
         required: false
+      
       pppoe_password:
         description: "宽带密码 (若启用PPPoE)"
         required: false
-
 
 permissions:
   contents: write
@@ -539,8 +595,6 @@ jobs:
           mkdir -p "${{ github.workspace }}/custom"
           echo "${{ github.event.inputs.custom_router_ip }}" > "${{ github.workspace }}/custom/custom_router_ip.txt"
           echo "您设置的路由器管理地址是:${{ github.event.inputs.custom_router_ip }}"
-          # 后续步骤会将该文件映射到路由器/etc/config/custom_router_ip.txt 以便用于开机脚本99-custom.sh读取用户设置的ip
-
 
       - name: Validate PPPoE Inputs
         run: |
@@ -551,6 +605,22 @@ jobs:
             fi
           fi
       
+      # ========== 新增：验证链路聚合配置 ==========
+      - name: Validate Bonding Inputs
+        run: |
+          if [[ "${{ inputs.include_bonding }}" == "yes" ]]; then
+            if [[ -z "${{ inputs.bonding_slaves }}" || "${{ inputs.bonding_slaves }}" == "" ]]; then
+              echo "Error: Bonding slaves must be provided when bonding is enabled!"
+              exit 1
+            fi
+            echo "✅ 链路聚合已启用"
+            echo "   - 聚合端口: ${{ inputs.bonding_slaves }}"
+            echo "   - 聚合模式: ${{ inputs.bonding_policy }}"
+          else
+            echo "❎ 链路聚合未启用"
+          fi
+      # ==========================================
+      
       - name: Enable Store integration
         run: |
           if [ "${{ github.event.inputs.enable_store }}" == "true" ]; then
@@ -560,12 +630,21 @@ jobs:
             echo "❎ 未启用 luci-app-store"
           fi
 
-
       - name: Build Wireless ImmortalWrt
         run: |
           profile="${{ github.event.inputs.profile }}"
           echo "Building for profile: $profile"
           include_docker="${{ github.event.inputs.include_docker }}"
+          
+          # ========== 新增：读取链路聚合变量 ==========
+          include_bonding="${{ github.event.inputs.include_bonding }}"
+          bonding_slaves="${{ github.event.inputs.bonding_slaves }}"
+          bonding_policy="${{ github.event.inputs.bonding_policy }}"
+          bonding_xmit_hash="${{ github.event.inputs.bonding_xmit_hash }}"
+          bonding_lacp_rate="${{ github.event.inputs.bonding_lacp_rate }}"
+          bonding_min_links="${{ github.event.inputs.bonding_min_links }}"
+          # ==========================================
+          
           # 默认平台
           echo "platform=mediatek/filogic" >> $GITHUB_ENV
 
@@ -596,12 +675,10 @@ jobs:
           # 判断机型
           case "$profile" in
               glinet_gl-b2200)
-                  # 虽然它是高通ipq40xx平台 但由于都是gl机型 故放在一起 找起来方便
                   tag=ipq40xx-generic-openwrt-24.10.6
                   echo "platform=ipq40xx/generic" >> $GITHUB_ENV
                   ;;
-              glinet_gl-axt1800|glinet_gl-ax1800)
-                  # 虽然它是高通ipq60xx平台 但由于都是gl机型 故放在一起 找起来方便
+              glinet_gl-axt1800|glinet_gl-ax1800|jdcloud_taiyi-er1)
                   tag=qualcommax-ipq60xx-snapshot
                   echo "platform=qualcommax/ipq60xx" >> $GITHUB_ENV
                   ;;
@@ -609,7 +686,6 @@ jobs:
                   tag=mediatek-mt7622-openwrt-24.10.6
                   echo "platform=mediatek/mt7622" >> $GITHUB_ENV
                   ;;
-              # 下列机型目前没有24.10 因此采用23.05.4分支来构建
               cmcc_rax3000m-emmc-ubootmod | \
               cmcc_rax3000m-nand-ubootmod | \
               cmcc_a10 | \
@@ -626,12 +702,10 @@ jobs:
                   cp ${{ github.workspace }}/mediatek-filogic/build23.sh ${{ github.workspace }}/mediatek-filogic/build24.sh
                   ;;
               *)
-                  # 如果前面匹配了 ipq807x、mt7621、bcm53xx 机型文件，则使用对应 tag
                   if [[ -n "$case_tag" ]]; then
                       tag=$case_tag
                       echo "platform=$case_platform" >> $GITHUB_ENV
                   else
-                      # 默认分支
                       tag=mediatek-filogic-openwrt-24.10.6
                   fi
                   ;;
@@ -650,6 +724,14 @@ jobs:
               -e ENABLE_PPPOE=${{ inputs.enable_pppoe }} \
               -e PPPOE_ACCOUNT=${{ inputs.pppoe_account }} \
               -e PPPOE_PASSWORD=${{ inputs.pppoe_password }} \
+              # ========== 新增：传递链路聚合参数 ==========
+              -e INCLUDE_BONDING=$include_bonding \
+              -e BONDING_SLAVES="$bonding_slaves" \
+              -e BONDING_POLICY=$bonding_policy \
+              -e BONDING_XMIT_HASH=$bonding_xmit_hash \
+              -e BONDING_LACP_RATE=$bonding_lacp_rate \
+              -e BONDING_MIN_LINKS=$bonding_min_links \
+              # ==========================================
             immortalwrt/imagebuilder:$tag /bin/bash /home/build/immortalwrt/build.sh
           
 
@@ -661,6 +743,16 @@ jobs:
           else
             echo -e "NO docker"
           fi
+          
+          # ========== 新增：添加链路聚合信息到 release 说明 ==========
+          if [ "${{ github.event.inputs.include_bonding }}" == "yes" ]; then
+            echo -e "\n### 链路聚合已启用" >> ${{ github.workspace }}/mediatek-filogic/info.md
+            echo "- 聚合端口: ${{ github.event.inputs.bonding_slaves }}" >> ${{ github.workspace }}/mediatek-filogic/info.md
+            echo "- 聚合模式: ${{ github.event.inputs.bonding_policy }}" >> ${{ github.workspace }}/mediatek-filogic/info.md
+            echo -e "\n> 💡 交换机端请配置对应的链路聚合组 (LACP 动态聚合)" >> ${{ github.workspace }}/mediatek-filogic/info.md
+          fi
+          # =========================================================
+          
           custom_router_ip="${{ github.event.inputs.custom_router_ip }}"
           extra_content_ip="#### 管理地址 $custom_router_ip"
           echo -e "\n $extra_content_ip" >> ${{ github.workspace }}/mediatek-filogic/info.md
