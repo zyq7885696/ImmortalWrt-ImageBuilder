@@ -22,13 +22,14 @@ sed -i '1i\
 arch aarch64_generic 10\n\
 arch aarch64_cortex-a53 15' repositories.conf
 
+
+
 # yml 传入的路由器型号 PROFILE
 echo "Building for profile: $PROFILE"
 
 echo "Include Docker: $INCLUDE_DOCKER"
-echo "Include Bonding: $INCLUDE_BONDING"
 echo "Create pppoe-settings"
-mkdir -p /home/build/immortalwrt/files/etc/config
+mkdir -p  /home/build/immortalwrt/files/etc/config
 
 # 创建pppoe配置文件 yml传入pppoe变量————>pppoe-settings文件
 cat << EOF > /home/build/immortalwrt/files/etc/config/pppoe-settings
@@ -42,6 +43,7 @@ cat /home/build/immortalwrt/files/etc/config/pppoe-settings
 
 # 输出调试信息
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting build process..."
+
 
 # 定义所需安装的包列表 下列插件你都可以自行删减
 PACKAGES=""
@@ -58,6 +60,7 @@ PACKAGES="$PACKAGES openssh-sftp-server"
 # 文件管理器
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 
+
 # 第三方软件包 合并
 # ======== shell/custom-packages.sh =======
 if [ "$PROFILE" = "glinet_gl-axt1800" ] || [ "$PROFILE" = "glinet_gl-ax1800" ]; then
@@ -73,12 +76,6 @@ fi
 if [ "$INCLUDE_DOCKER" = "yes" ]; then
     PACKAGES="$PACKAGES luci-i18n-dockerman-zh-cn"
     echo "Adding package: luci-i18n-dockerman-zh-cn"
-fi
-
-# 判断是否需要编译链路聚合插件
-if [ "$INCLUDE_BONDING" = "yes" ]; then
-    PACKAGES="$PACKAGES kmod-bonding proto-bonding luci-proto-bonding"
-    echo "Adding bonding packages: kmod-bonding, proto-bonding, luci-proto-bonding"
 fi
 
 # 若构建openclash 则添加内核
@@ -102,6 +99,7 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
 else
     echo "⚪️ 未选择 luci-app-openclash"
 fi
+
 
 # 构建镜像
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Building image with the following packages:"
