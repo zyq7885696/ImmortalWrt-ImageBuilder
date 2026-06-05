@@ -511,7 +511,7 @@ on:
       
       # ========== 新增：链路聚合配置 ==========
       include_bonding:
-        description: "是否启用链路聚合 (与H3C S5130S-28S配合)"
+        description: "是否启用链路聚合"
         required: true
         default: 'no'
         type: choice
@@ -525,7 +525,7 @@ on:
         default: "eth1 eth2"
       
       bonding_policy:
-        description: "链路聚合模式 (802.3ad=LACP动态, balance-rr=静态轮询)"
+        description: "链路聚合模式 (802.3ad=LACP, balance-rr=静态)"
         required: false
         default: '802.3ad'
         type: choice
@@ -534,7 +534,7 @@ on:
           - 'balance-rr'
       
       bonding_xmit_hash:
-        description: "哈希策略 (仅802.3ad模式有效)"
+        description: "哈希策略"
         required: false
         default: 'layer2+3'
         type: choice
@@ -544,7 +544,7 @@ on:
           - 'layer3+4'
       
       bonding_lacp_rate:
-        description: "LACP协商速率"
+        description: "LACP速率"
         required: false
         default: 'slow'
         type: choice
@@ -613,9 +613,7 @@ jobs:
               echo "Error: Bonding slaves must be provided when bonding is enabled!"
               exit 1
             fi
-            echo "✅ 链路聚合已启用"
-            echo "   - 聚合端口: ${{ inputs.bonding_slaves }}"
-            echo "   - 聚合模式: ${{ inputs.bonding_policy }}"
+            echo "✅ 链路聚合已启用: ${{ inputs.bonding_slaves }}"
           else
             echo "❎ 链路聚合未启用"
           fi
@@ -675,10 +673,12 @@ jobs:
           # 判断机型
           case "$profile" in
               glinet_gl-b2200)
+                  # 虽然它是高通ipq40xx平台 但由于都是gl机型 故放在一起 找起来方便
                   tag=ipq40xx-generic-openwrt-24.10.6
                   echo "platform=ipq40xx/generic" >> $GITHUB_ENV
                   ;;
-              glinet_gl-axt1800|glinet_gl-ax1800|jdcloud_taiyi-er1)
+              glinet_gl-axt1800|glinet_gl-ax1800)
+                  # 虽然它是高通ipq60xx平台 但由于都是gl机型 故放在一起 找起来方便
                   tag=qualcommax-ipq60xx-snapshot
                   echo "platform=qualcommax/ipq60xx" >> $GITHUB_ENV
                   ;;
@@ -686,6 +686,7 @@ jobs:
                   tag=mediatek-mt7622-openwrt-24.10.6
                   echo "platform=mediatek/mt7622" >> $GITHUB_ENV
                   ;;
+              # 下列机型目前没有24.10 因此采用23.05.4分支来构建
               cmcc_rax3000m-emmc-ubootmod | \
               cmcc_rax3000m-nand-ubootmod | \
               cmcc_a10 | \
@@ -702,10 +703,12 @@ jobs:
                   cp ${{ github.workspace }}/mediatek-filogic/build23.sh ${{ github.workspace }}/mediatek-filogic/build24.sh
                   ;;
               *)
+                  # 如果前面匹配了 ipq807x、mt7621、bcm53xx 机型文件，则使用对应 tag
                   if [[ -n "$case_tag" ]]; then
                       tag=$case_tag
                       echo "platform=$case_platform" >> $GITHUB_ENV
                   else
+                      # 默认分支
                       tag=mediatek-filogic-openwrt-24.10.6
                   fi
                   ;;
@@ -744,14 +747,13 @@ jobs:
             echo -e "NO docker"
           fi
           
-          # ========== 新增：添加链路聚合信息到 release 说明 ==========
+          # ========== 新增：添加链路聚合信息 ==========
           if [ "${{ github.event.inputs.include_bonding }}" == "yes" ]; then
             echo -e "\n### 链路聚合已启用" >> ${{ github.workspace }}/mediatek-filogic/info.md
             echo "- 聚合端口: ${{ github.event.inputs.bonding_slaves }}" >> ${{ github.workspace }}/mediatek-filogic/info.md
             echo "- 聚合模式: ${{ github.event.inputs.bonding_policy }}" >> ${{ github.workspace }}/mediatek-filogic/info.md
-            echo -e "\n> 💡 交换机端请配置对应的链路聚合组 (LACP 动态聚合)" >> ${{ github.workspace }}/mediatek-filogic/info.md
           fi
-          # =========================================================
+          # ==========================================
           
           custom_router_ip="${{ github.event.inputs.custom_router_ip }}"
           extra_content_ip="#### 管理地址 $custom_router_ip"
