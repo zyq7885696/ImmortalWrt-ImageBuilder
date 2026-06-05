@@ -33,8 +33,6 @@ on:
           - glinet_gl-b2200
           - glinet_gl-x3000
           - glinet_gl-xe3000
-          # 京东云太乙ER1 IPQ6010
-          - jdcloud_taiyi-er1
           # 就是Fudy MT3000
           - huasifei_wh3000-emmc
           - cudy_tr3000-v1
@@ -505,16 +503,6 @@ on:
         options:
           - 'yes'
           - 'no'
-      # ========== 新增：链路聚合 ==========
-      include_bonding:
-        description: "是否编译链路聚合插件"
-        required: true
-        default: 'no'
-        type: choice
-        options:
-          - 'yes'
-          - 'no'
-      # ==================================
       enable_pppoe:
         description: "是否配置PPPoE拨号信息?"
         required: true
@@ -529,6 +517,7 @@ on:
       pppoe_password:
         description: "宽带密码 (若启用PPPoE)"
         required: false
+
 
 permissions:
   contents: write
@@ -550,6 +539,8 @@ jobs:
           mkdir -p "${{ github.workspace }}/custom"
           echo "${{ github.event.inputs.custom_router_ip }}" > "${{ github.workspace }}/custom/custom_router_ip.txt"
           echo "您设置的路由器管理地址是:${{ github.event.inputs.custom_router_ip }}"
+          # 后续步骤会将该文件映射到路由器/etc/config/custom_router_ip.txt 以便用于开机脚本99-custom.sh读取用户设置的ip
+
 
       - name: Validate PPPoE Inputs
         run: |
@@ -569,14 +560,12 @@ jobs:
             echo "❎ 未启用 luci-app-store"
           fi
 
+
       - name: Build Wireless ImmortalWrt
         run: |
           profile="${{ github.event.inputs.profile }}"
           echo "Building for profile: $profile"
           include_docker="${{ github.event.inputs.include_docker }}"
-          # ========== 新增：读取链路聚合变量 ==========
-          include_bonding="${{ github.event.inputs.include_bonding }}"
-          # ==========================================
           # 默认平台
           echo "platform=mediatek/filogic" >> $GITHUB_ENV
 
@@ -607,10 +596,12 @@ jobs:
           # 判断机型
           case "$profile" in
               glinet_gl-b2200)
+                  # 虽然它是高通ipq40xx平台 但由于都是gl机型 故放在一起 找起来方便
                   tag=ipq40xx-generic-openwrt-24.10.6
                   echo "platform=ipq40xx/generic" >> $GITHUB_ENV
                   ;;
               glinet_gl-axt1800|glinet_gl-ax1800)
+                  # 虽然它是高通ipq60xx平台 但由于都是gl机型 故放在一起 找起来方便
                   tag=qualcommax-ipq60xx-snapshot
                   echo "platform=qualcommax/ipq60xx" >> $GITHUB_ENV
                   ;;
@@ -618,6 +609,7 @@ jobs:
                   tag=mediatek-mt7622-openwrt-24.10.6
                   echo "platform=mediatek/mt7622" >> $GITHUB_ENV
                   ;;
+              # 下列机型目前没有24.10 因此采用23.05.4分支来构建
               cmcc_rax3000m-emmc-ubootmod | \
               cmcc_rax3000m-nand-ubootmod | \
               cmcc_a10 | \
@@ -634,10 +626,12 @@ jobs:
                   cp ${{ github.workspace }}/mediatek-filogic/build23.sh ${{ github.workspace }}/mediatek-filogic/build24.sh
                   ;;
               *)
+                  # 如果前面匹配了 ipq807x、mt7621、bcm53xx 机型文件，则使用对应 tag
                   if [[ -n "$case_tag" ]]; then
                       tag=$case_tag
                       echo "platform=$case_platform" >> $GITHUB_ENV
                   else
+                      # 默认分支
                       tag=mediatek-filogic-openwrt-24.10.6
                   fi
                   ;;
@@ -656,9 +650,6 @@ jobs:
               -e ENABLE_PPPOE=${{ inputs.enable_pppoe }} \
               -e PPPOE_ACCOUNT=${{ inputs.pppoe_account }} \
               -e PPPOE_PASSWORD=${{ inputs.pppoe_password }} \
-              # ========== 新增：传递链路聚合变量 ==========
-              -e INCLUDE_BONDING=$include_bonding \
-              # ==========================================
             immortalwrt/imagebuilder:$tag /bin/bash /home/build/immortalwrt/build.sh
           
 
